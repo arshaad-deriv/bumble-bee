@@ -31,22 +31,22 @@ if 'parsed_nodes' not in st.session_state:
 
 # Add sidebar configuration
 with st.sidebar:
-    st.title("Navigation")
+    # st.title("Navigation")
     
-    # Navigation with radio buttons
-    page = st.radio(
-        "Select Page",
-        ["Page Content", "Static Elements", "CMS Collection Items"],
-        index=0,
-        key="navigation"
-    )
+    # Navigation with radio buttons - commented out for now
+    # page = st.radio(
+    #     "Select Page",
+    #     ["Page Content", "Static Elements", "CMS Collection Items"],
+    #     index=0,
+    #     key="navigation"
+    # )
     
-    if page == "Static Elements":
-        st.switch_page("pages/1_Static_Elements.py")
-    elif page == "CMS Collection Items":
-        st.switch_page("pages/2_CMS_Collection_Items.py")
+    # if page == "Static Elements":
+    #     st.switch_page("pages/1_Static_Elements.py")
+    # elif page == "CMS Collection Items":
+    #     st.switch_page("pages/2_CMS_Collection_Items.py")
     
-    st.divider()
+    # st.divider()
     
     # OpenAI Configuration
     st.subheader("OpenAI Configuration")
@@ -392,8 +392,10 @@ def update_page_content(page_id, locale_id, api_key, translated_content):
 def main():
     st.title("Webflow Page Content Manager")
     
-    # Add the image at the top
-    st.image("jameson.webp", caption="J. Jonah Jameson")
+    # Add the image at the top with centering and stretching
+    col1, col2, col3 = st.columns([1, 3, 1])
+    with col2:
+        st.image("jameson.webp", caption="J. Jonah Jameson", use_container_width=True)
     
     # Print current session state
     print("\nCurrent Session State:")
