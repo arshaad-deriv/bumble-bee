@@ -323,158 +323,79 @@ def main():
                                 # Translation section
                                 st.subheader("Translation Management")
                                 
-                                # Add translation mode selection
-                                translation_mode = st.radio(
-                                    "Translation Mode",
-                                    ["Single Language", "All Languages"],
-                                    help="Choose to translate to one language or all available languages"
+                                # Select target language first
+                                target_language = st.selectbox(
+                                    "Select target language",
+                                    options=[f"{locale['name']} ({locale['code']}) - {locale['id']}" 
+                                            for locale in cms_locales]
                                 )
                                 
-                                if translation_mode == "Single Language":
-                                    # Existing single language translation logic
-                                    target_language = st.selectbox(
-                                        "Select target language",
-                                        options=[f"{locale['name']} ({locale['code']}) - {locale['id']}" 
-                                                for locale in cms_locales]
-                                    )
+                                if target_language:
+                                    # Extract CMS Locale ID and language code
+                                    cms_locale_id = target_language.split(' - ')[-1]
+                                    language_code = target_language.split('(')[1].split(')')[0]
                                     
-                                    if target_language:
-                                        # Extract CMS Locale ID and language code
-                                        cms_locale_id = target_language.split(' - ')[-1]
-                                        language_code = target_language.split('(')[1].split(')')[0]
+                                    # Add a "Translate" button before the form
+                                    if st.button("Translate Content"):
+                                        # Store translations in session state
+                                        st.session_state.translations = {}
                                         
-                                        # Display form with translations
-                                        with st.form("translation_form"):
-                                            edited_fields = {}
-                                            
-                                            for key, value in filtered_data.items():
-                                                if key in ['slug', 'accumulators-option']:
-                                                    edited_fields[key] = value
-                                                    continue
-                                                
-                                                if isinstance(value, str):
-                                                    # Use translated text if available, otherwise use original
-                                                    display_text = st.session_state.get('translations', {}).get(key, value)
-                                                    
-                                                    if len(value) > 200:
-                                                        edited_fields[key] = st.text_area(
-                                                            key,
-                                                            value=display_text,
-                                                            height=300
-                                                        )
-                                                    else:
-                                                        edited_fields[key] = st.text_input(
-                                                            key,
-                                                            value=display_text
-                                                        )
-                                            
-                                            col1, col2 = st.columns(2)
-                                            with col1:
-                                                translate_button = st.form_submit_button("Translate")
-                                            with col2:
-                                                update_button = st.form_submit_button("Update Content")
-                                            
-                                            if translate_button:
-                                                with st.spinner("Translating content..."):
-                                                    for key, value in filtered_data.items():
-                                                        if isinstance(value, str) and key not in ['slug', 'accumulators-option']:
-                                                            translated_text, error = translate_with_openai(
-                                                                value,
-                                                                language_code,
-                                                                st.session_state.openai_key
-                                                            )
-                                                            if error:
-                                                                st.error(f"Error translating {key}: {error}")
-                                                            else:
-                                                                edited_fields[key] = translated_text
-                                            
-                                            if update_button:
-                                                with st.spinner("Updating content..."):
-                                                    result = execute_curl_command(
-                                                        collection_id=collection_id,
-                                                        item_id=selected_data['id'],
-                                                        api_key=st.session_state.api_key,
-                                                        cms_locale_id=cms_locale_id,
-                                                        field_data=edited_fields
-                                                    )
-                                                    
-                                                    if result['error']:
-                                                        st.error(f"Error updating content: {result['error']}")
-                                                    else:
-                                                        st.success("✅ Content updated successfully!")
-                                
-                                else:  # All Languages mode
-                                    if st.button("Translate and Update All Languages"):
-                                        # Create a progress container
-                                        progress_container = st.empty()
-                                        status_container = st.empty()
-                                        results_container = st.container()
-                                        
-                                        # Initialize translation results
-                                        translation_results = []
-                                        
-                                        # Get non-default languages
-                                        languages_to_translate = [l for l in cms_locales if not l.get('default', False)]
-                                        total_languages = len(languages_to_translate)
-                                        
-                                        for idx, locale in enumerate(languages_to_translate):
-                                            # Update progress (ensure it's between 0 and 1)
-                                            progress = min(idx / total_languages, 1.0)
-                                            progress_container.progress(progress)
-                                            
-                                            # Update status message
-                                            status_container.info(f"Translating to {locale['name']} ({locale['code']})...")
-                                            
-                                            # Store translations for this language
-                                            current_translations = {}
-                                            
-                                            # Translate each field
+                                        with st.spinner("Translating content..."):
                                             for key, value in filtered_data.items():
                                                 if isinstance(value, str) and key not in ['slug', 'accumulators-option']:
                                                     translated_text, error = translate_with_openai(
                                                         value,
-                                                        locale['code'],
+                                                        language_code,
                                                         st.session_state.openai_key
                                                     )
                                                     if error:
-                                                        translation_results.append({
-                                                            'language': locale['name'],
-                                                            'status': 'error',
-                                                            'message': f"Error translating {key}: {error}"
-                                                        })
+                                                        st.error(f"Error translating {key}: {error}")
                                                         translated_text = value
-                                                    current_translations[key] = translated_text
-                                                else:
-                                                    current_translations[key] = value
-                                            
-                                            # Execute update for this language
-                                            result = execute_curl_command(
-                                                collection_id=collection_id,
-                                                item_id=selected_data['id'],
-                                                api_key=st.session_state.api_key,
-                                                cms_locale_id=locale['id'],
-                                                field_data=current_translations
-                                            )
-                                            
-                                            # Store result
-                                            translation_results.append({
-                                                'language': locale['name'],
-                                                'status': 'success' if not result['error'] else 'error',
-                                                'message': result['error'] if result['error'] else 'Translation completed successfully'
-                                            })
-                                            
-                                            # Update results in real-time
-                                            with results_container:
-                                                st.write("Translation Results:")
-                                                for result in translation_results:
-                                                    if result['status'] == 'success':
-                                                        st.success(f"✅ {result['language']}: {result['message']}")
-                                                    else:
-                                                        st.error(f"❌ {result['language']}: {result['message']}")
+                                                    st.session_state.translations[key] = translated_text
+                                    
+                                    # Display form with translations if available
+                                    with st.form("translation_form"):
+                                        edited_fields = {}
                                         
-                                        # Clear progress and status when complete
-                                        progress_container.empty()
-                                        status_container.success("All translations completed!")
+                                        for key, value in filtered_data.items():
+                                            if key in ['slug', 'accumulators-option']:
+                                                edited_fields[key] = value
+                                                continue
+                                            
+                                            if isinstance(value, str):
+                                                # Use translated text if available, otherwise use original
+                                                display_text = st.session_state.get('translations', {}).get(key, value)
+                                                
+                                                if len(value) > 200:
+                                                    edited_fields[key] = st.text_area(
+                                                        key,
+                                                        value=display_text,
+                                                        height=300
+                                                    )
+                                                else:
+                                                    edited_fields[key] = st.text_input(
+                                                        key,
+                                                        value=display_text
+                                                    )
+                                        
+                                        # Update button
+                                        if st.form_submit_button("Update Content"):
+                                            # Generate and execute curl command
+                                            with st.spinner("Updating content..."):
+                                                result = execute_curl_command(
+                                                    collection_id=collection_id,
+                                                    item_id=selected_data['id'],
+                                                    api_key=st.session_state.api_key,
+                                                    cms_locale_id=cms_locale_id,
+                                                    field_data=edited_fields
+                                                )
+                                                
+                                                if result['error']:
+                                                    st.error(f"Error updating content: {result['error']}")
+                                                else:
+                                                    st.success("✅ Content updated successfully!")
+                                                    with st.expander("View Response"):
+                                                        st.json(result['response'])
 
 if __name__ == "__main__":
     main() 
