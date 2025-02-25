@@ -13,8 +13,6 @@ st.set_page_config(
     layout="wide"
 )
 
-
-
 # Initialize session state
 if 'site_id' not in st.session_state:
     st.session_state.site_id = ''
@@ -42,23 +40,12 @@ if 'selected_languages' not in st.session_state:
     st.session_state.selected_languages = []
 if 'translation_progress' not in st.session_state:
     st.session_state.translation_progress = 0
+if 'excluded_components' not in st.session_state:
+    st.session_state.excluded_components = {}  # Will store {name: count}
 
 # Add sidebar configuration
 with st.sidebar:
-    st.title("Navigation")
-    
-    # Navigation with radio buttons
-    page = st.radio(
-        "Select Page",  # Added proper label
-        ["Page Content", "Static Elements"],
-        index=1,  # Default to Static Elements
-        key="navigation"
-    )
-    
-    if page == "Page Content":
-        st.switch_page("app.py")  # Make sure this path is correct
-    
-    st.divider()
+
     
     # OpenAI Configuration
     st.subheader("OpenAI Configuration")
@@ -72,61 +59,117 @@ with st.sidebar:
         st.session_state.openai_key = openai_key
 
 def get_site_components(site_id, api_key):
-    """Get list of components from the site"""
-    url = f"https://api.webflow.com/v2/sites/{site_id}/components"
+    """Get list of components from the site with pagination handling"""
+    base_url = f"https://api.webflow.com/v2/sites/{site_id}/components"
     headers = {
         "accept": "application/json",
         "authorization": f"Bearer {api_key}"
     }
     
-    print(f"\n[DEBUG] Fetching components from URL: {url}")
-    try:
-        response = requests.get(url, headers=headers)
-        response.raise_for_status()
-        components = response.json()["components"]
-        print(f"[DEBUG] Successfully fetched {len(components)} components")
-        return components
-    except Exception as e:
-        print(f"[DEBUG] Error fetching components: {str(e)}")
-        st.error(f"Error fetching components: {str(e)}")
-        return []
+    all_components = []
+    offset = 0
+    limit = 100  # Maximum allowed by API
+    
+    while True:
+        url = f"{base_url}?limit={limit}&offset={offset}"
+        print(f"\n[DEBUG] Fetching components from URL: {url}")
+        
+        try:
+            response = requests.get(url, headers=headers)
+            response.raise_for_status()
+            data = response.json()
+            
+            # Add components from this batch
+            current_components = data.get('components', [])
+            all_components.extend(current_components)
+            
+            # Get pagination info
+            pagination = data.get('pagination', {})
+            total = pagination.get('total', 0)
+            
+            print(f"[DEBUG] Retrieved {len(current_components)} components (Total: {len(all_components)}/{total})")
+            
+            # Check if we've got all components
+            if len(all_components) >= total:
+                break
+                
+            # Update offset for next batch
+            offset += limit
+            
+        except Exception as e:
+            print(f"[DEBUG] Error fetching components: {str(e)}")
+            st.error(f"Error fetching components: {str(e)}")
+            return []
+    
+    print(f"[DEBUG] Successfully fetched all {len(all_components)} components")
+    return all_components
 
 def get_component_content(site_id, component_id, api_key):
-    """Get component content using DOM endpoint"""
-    url = f"https://api.webflow.com/v2/sites/{site_id}/components/{component_id}/dom"
+    """Get component content using DOM endpoint with pagination handling"""
+    base_url = f"https://api.webflow.com/v2/sites/{site_id}/components/{component_id}/dom"
     headers = {
         "accept": "application/json",
         "authorization": f"Bearer {api_key}",
         "accept-version": "1.0.0"
     }
     
-    print("\n" + "="*50)
-    print("API REQUEST - Get Component Content")
-    print("="*50)
-    print(f"URL: {url}")
-    print("\nHeaders:")
-    for key, value in headers.items():
-        if key.lower() == 'authorization':
-            print(f"{key}: Bearer ****{value[-4:]}")
-        else:
-            print(f"{key}: {value}")
+    all_nodes = []
+    offset = 0
+    limit = 100  # Maximum allowed by API
     
-    try:
-        response = requests.get(url, headers=headers)
-        response.raise_for_status()
-        data = response.json()
+    while True:
+        # Construct URL with pagination parameters
+        url = f"{base_url}?limit={limit}&offset={offset}"
         
-        # Print the complete API response
         print("\n" + "="*50)
-        print("COMPLETE API RESPONSE")
+        print(f"API REQUEST - Get Component Content (Offset: {offset})")
         print("="*50)
-        print(json.dumps(data, indent=2))
+        print(f"URL: {url}")
+        print("\nHeaders:")
+        for key, value in headers.items():
+            if key.lower() == 'authorization':
+                print(f"{key}: Bearer ****{value[-4:]}")
+            else:
+                print(f"{key}: {value}")
         
-        return data
-    except Exception as e:
-        print(f"\nERROR: {str(e)}")
-        st.error(f"Error fetching component content: {str(e)}")
-        return None
+        try:
+            response = requests.get(url, headers=headers)
+            response.raise_for_status()
+            data = response.json()
+            
+            # Add nodes from this batch to our collection
+            current_nodes = data.get('nodes', [])
+            all_nodes.extend(current_nodes)
+            
+            # Get pagination info
+            pagination = data.get('pagination', {})
+            total = pagination.get('total', 0)
+            
+            print(f"\nRetrieved {len(current_nodes)} nodes (Total: {len(all_nodes)}/{total})")
+            
+            # Print the complete API response for debugging
+            print("\n" + "="*50)
+            print("COMPLETE API RESPONSE")
+            print("="*50)
+            print(json.dumps(data, indent=2))
+            
+            # Check if we've got all nodes
+            if len(all_nodes) >= total:
+                break
+                
+            # Update offset for next batch
+            offset += limit
+            
+        except Exception as e:
+            print(f"\nERROR: {str(e)}")
+            st.error(f"Error fetching component content: {str(e)}")
+            return None
+    
+    # Return complete data with all nodes
+    return {
+        "nodes": all_nodes,
+        "lastUpdated": data.get("lastUpdated")
+    }
 
 def parse_component_content(content):
     """Parse component content to extract node IDs and HTML"""
@@ -291,7 +334,7 @@ def update_component_content(site_id, component_id, locale_id, nodes, api_key):
         return None, error_msg
 
 def main():
-    st.title("Static Elements Manager")
+    st.title("Static Components Manager")
     
     # 1. Credentials Form
     with st.form("credentials_form"):
@@ -347,18 +390,40 @@ def main():
     if st.session_state.components:
         st.subheader("Available Components")
         
-        # Create a table of components
+        # Filter out "Break" components and count them
+        filtered_components = []
+        break_count = 0
+        
+        for comp in st.session_state.components:
+            comp_name = comp.get('name', 'Unnamed')
+            if comp_name == "Break":
+                break_count += 1
+            else:
+                filtered_components.append(comp)
+        
+        # Show exclusion statistics
+        if break_count > 0:
+            st.info(f"Excluded {break_count} 'Break' component(s)")
+            st.write("---")
+        
+        # Show filtered components count
+        total_components = len(st.session_state.components)
+        filtered_count = len(filtered_components)
+        st.write(f"Showing {filtered_count} of {total_components} total components")
+        
+        # Create a table of filtered components
         component_data = {
-            "Name": [comp.get('name', 'Unnamed') for comp in st.session_state.components],
-            "Component ID": [comp['id'] for comp in st.session_state.components],
-            "Type": [comp.get('type', 'Unknown') for comp in st.session_state.components]
+            "Name": [comp.get('name', 'Unnamed') for comp in filtered_components],
+            "Component ID": [comp['id'] for comp in filtered_components],
+            "Type": [comp.get('type', 'Unknown') for comp in filtered_components]
         }
+        st.write("Showing components in table (limited to 100 rows):")
         st.table(component_data)
         
-        # 5. Component Selection and Content View
+        # Update component selection to use filtered list
         selected_component = st.selectbox(
-            "Select a component",
-            options=[f"{comp.get('name', 'Unnamed')} ({comp['id']})" for comp in st.session_state.components],
+            f"Select a component (Total visible: {filtered_count})",
+            options=[f"{comp.get('name', 'Unnamed')} ({comp['id']})" for comp in filtered_components],
             key="component_selector",
             index=0 if st.session_state.selected_component else 0
         )
