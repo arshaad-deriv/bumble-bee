@@ -649,7 +649,6 @@ def main():
                         "Yumiwork, Lolam building, Kumul Highway, Land # 11/OD22/021, Port Vila, Vanuatu"
                     ],
                     'list_of_people': [  # New category
-                        'Derrick',
                         'Joanna Frendo',
                         'Seema Hallon',
                         'Louise Wolf',
