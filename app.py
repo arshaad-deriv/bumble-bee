@@ -31,22 +31,6 @@ if 'parsed_nodes' not in st.session_state:
 
 # Add sidebar configuration
 with st.sidebar:
-    # st.title("Navigation")
-    
-    # Navigation with radio buttons - commented out for now
-    # page = st.radio(
-    #     "Select Page",
-    #     ["Page Content", "Static Elements", "CMS Collection Items"],
-    #     index=0,
-    #     key="navigation"
-    # )
-    
-    # if page == "Static Elements":
-    #     st.switch_page("pages/1_Static_Elements.py")
-    # elif page == "CMS Collection Items":
-    #     st.switch_page("pages/2_CMS_Collection_Items.py")
-    
-    # st.divider()
     
     # OpenAI Configuration
     st.subheader("OpenAI Configuration")
@@ -258,13 +242,28 @@ def translate_content_with_openai(parsed_nodes, target_language, api_key):
         print("Content to translate:")
         print(json.dumps(parsed_nodes, indent=2))
         
+        # Get all terms from the glossary that should not be translated
+        do_not_translate_terms = []
+        if 'glossary' in st.session_state:
+            for category, terms in st.session_state.glossary.items():
+                do_not_translate_terms.extend(terms)
+        
+        # Format the terms as a bulleted list for the prompt
+        terms_list = "\n".join([f"- {term}" for term in do_not_translate_terms])
+        
         # Prepare the system message explaining what we want
         system_message = f"""You are a professional translator with 20 years of experience.  
-        Translate only the "text" values in the JSON to {target_language}. 
-        Follow these rules when translating:
+        Translate only the "text" values in the JSON to {target_language}.
 
+         
+        
+        DO NOT TRANSLATE the following terms - keep them exactly as they appear:
+        {terms_list}
+        
+        Follow these additional rules when translating:
         - When encountering the word "Deriv" and any succeeding word, analyze the context and based on it, keep it in English. For example, "Deriv Blog," "Deriv Life," "Deriv Bot," and "Deriv App" should be kept in English.
-        - Keep product names such as P2P, MT5, Deriv X, Deriv cTrader, SmartTrader, Deriv Trader, Deriv GO, Deriv Bot, and Binary Bot in English.
+        - Keep product names such as Forex, CFDs, P2P, MT5, Deriv X, Deriv cTrader, SmartTrader, Deriv Trader, Deriv GO, Deriv Bot, and Binary Bot in English.
+        - Do not translate the following names of people explicitly mentioned in the JSON: Louise Wolf, Rakshit Choudhary,Chris Horn, Seema Hallon, Jean-Yves Sireau, and others. Keep them in English.
         
         Keep all other JSON structure and values exactly the same.
         Return only the JSON, no explanations."""
@@ -275,12 +274,12 @@ def translate_content_with_openai(parsed_nodes, target_language, api_key):
         # Make the API call with new syntax
         try:
             response = client.chat.completions.create(
-                model="gpt-4o-mini",
+                model="o3-mini",
                 messages=[
                     {"role": "system", "content": system_message},
                     {"role": "user", "content": user_message}
-                ],
-                temperature=0.3
+                ]
+                # temperature=0.3
             )
             
             # Print the raw response for debugging
@@ -338,7 +337,7 @@ def update_page_content(page_id, locale_id, api_key, translated_content):
                 {
                     "propertyId": override["propertyId"],
                     "text": override["text"] if isinstance(override["text"], str) 
-                           else override["text"].get('text', '')
+                           else (override["text"].get('text', '') if override["text"] is not None else '')
                 }
                 for override in node["propertyOverrides"]
             ]
@@ -570,91 +569,235 @@ def main():
                                         st.success(f"Successfully updated content for {target_language}")
                                     else:
                                         st.error(f"Failed to update content for {target_language}: {error}")
-                                else:  # Proofreader role
-                                    st.write("### Proofreader Review Required")
-                                    st.write("Please review and edit the translations below (if required), then click the button to push the update to Webflow.")
-
-                                    # Create two columns for side-by-side view
-                                    col1, col2 = st.columns(2)
-
-                                    with col1:
-                                        st.subheader("JSON Structure")
-                                        # Show the full JSON structure
-                                        edited_translation_str = st.text_area(
-                                            "Full JSON (for advanced editing)",
-                                            value=json.dumps(translated_content, indent=2),
-                                            height=300,
-                                            key=f"translation_edit_json_{index}"
-                                        )
-
-                                    with col2:
-                                        st.subheader("Translations Only")
-                                        # Extract and display only the text fields for easier editing
-                                        translations = []
-                                        for node in translated_content:
-                                            for override in node.get('propertyOverrides', []):
-                                                if 'text' in override:
-                                                    translations.append(override['text'])
-                                        
-                                        # Join translations with newlines for readability
-                                        translation_text = '\n'.join(translations)
-                                        edited_translations = st.text_area(
-                                            "Edit Translations",
-                                            value=translation_text,
-                                            height=300,
-                                            key=f"translation_edit_text_{index}"
-                                        )
-
-                                    try:
-                                        # Only update if there are actual changes
-                                        if edited_translations != translation_text:
-                                            print(f"\nUpdating translations. Original:\n{translation_text}\nEdited:\n{edited_translations}")
-                                            
-                                            edited_translations_list = edited_translations.split('\n')
-                                            translation_index = 0
-                                            
-                                            # Create a deep copy of the original content
-                                            updated_content = json.loads(json.dumps(translated_content))
-                                            
-                                            # Update the translations in the JSON structure
-                                            for node in updated_content:
-                                                for override in node.get('propertyOverrides', []):
-                                                    if 'text' in override and translation_index < len(edited_translations_list):
-                                                        override['text'] = edited_translations_list[translation_index].strip()
-                                                        translation_index += 1
-                                            
-                                            # Update the JSON string
-                                            edited_translation_str = json.dumps(updated_content, indent=2)
-                                            print(f"\nUpdated JSON structure:\n{edited_translation_str}")
-                                    except Exception as e:
-                                        st.error(f"Error updating translations: {str(e)}")
-                                        print(f"\nError while updating translations: {str(e)}")
+                                elif user_role == "Proofreader":
+                                    st.write("### Proofreader Review")
+                                    st.info("Review and edit translations before publishing to Webflow.")
                                     
-                                    if st.button(f"Approve and Push to Webflow - {target_language}", key=f"approve_{index}"):
-                                        try:
-                                            # Use the appropriate content based on which was last edited
-                                            final_content = json.loads(edited_translation_str)
+                                    # Create tabs for different views
+                                    tab1, tab2 = st.tabs(["Side-by-Side View", "Full JSON View"])
+                                    
+                                    with tab1:
+                                        # Track if any translations were modified
+                                        modified_translations = False
+                                        
+                                        # Create a dictionary to store edited translations
+                                        if 'edited_translations' not in st.session_state:
+                                            st.session_state.edited_translations = {}
+                                        
+                                        # Initialize the edited translations for this language if not present
+                                        lang_key = f"edited_{target_language}"
+                                        if lang_key not in st.session_state.edited_translations:
+                                            st.session_state.edited_translations[lang_key] = {}
+                                        
+                                        # Add a filter option
+                                        filter_text = st.text_input("Filter translations", placeholder="Type to filter...", key=f"filter_{target_language}")
+                                        
+                                        # Count total translation items for progress tracking
+                                        total_items = 0
+                                        for node in translated_content:
+                                            if "propertyOverrides" in node and node["propertyOverrides"]:
+                                                total_items += len([o for o in node["propertyOverrides"] if 'text' in o])
+                                            elif "text" in node:
+                                                total_items += 1
+                                        
+                                        st.progress(0.0, text=f"0/{total_items} items reviewed")
+                                        
+                                        # Process each node for side-by-side display
+                                        item_counter = 0
+                                        reviewed_counter = 0
+                                        
+                                        for i, node in enumerate(translated_content):
+                                            node_id = node.get('id') or node.get('nodeId')
                                             
-                                            print("\nSending to Webflow:")
-                                            print(json.dumps(final_content, indent=2))
+                                            # Handle nodes with property overrides
+                                            if "propertyOverrides" in node and node["propertyOverrides"]:
+                                                for j, override in enumerate(node["propertyOverrides"]):
+                                                    if 'text' in override:
+                                                        item_counter += 1
+                                                        
+                                                        # Get the text content
+                                                        text_content = override['text'] if isinstance(override['text'], str) else override['text'].get('text', '')
+                                                        
+                                                        # Skip if filtered and doesn't match
+                                                        if filter_text and filter_text.lower() not in text_content.lower():
+                                                            continue
+                                                        
+                                                        # Create a unique key for this text item
+                                                        item_key = f"{node_id}_prop_{j}"
+                                                        
+                                                        # Find the original text if available
+                                                        original_text = "Original text not available"
+                                                        for orig_node in st.session_state.parsed_nodes:
+                                                            if orig_node.get('nodeId') == node_id:
+                                                                for orig_override in orig_node.get('propertyOverrides', []):
+                                                                    if orig_override.get('propertyId') == override.get('propertyId'):
+                                                                        original_text = orig_override.get('text', 'No text')
+                                                                        break
+                                                        
+                                                        # Create an expander for each translation item
+                                                        with st.expander(f"Item #{item_counter}: Property Override", expanded=False):
+                                                            col1, col2 = st.columns(2)
+                                                            
+                                                            with col1:
+                                                                st.caption("Original Text")
+                                                                st.code(original_text, language=None)
+                                                                st.caption(f"Node ID: {node_id[:8]}... | Property ID: {override.get('propertyId', 'N/A')[:8]}...")
+                                                            
+                                                            with col2:
+                                                                st.caption(f"Translation ({target_language})")
+                                                                # Use the stored edited value or the original translation
+                                                                current_value = st.session_state.edited_translations[lang_key].get(item_key, text_content)
+                                                                
+                                                                # Create a text area for editing
+                                                                edited_text = st.text_area(
+                                                                    "Edit translation",
+                                                                    value=current_value,
+                                                                    height=max(100, min(300, 100 + 20 * text_content.count('\n'))),
+                                                                    key=f"edit_{target_language}_{item_key}",
+                                                                    label_visibility="collapsed"
+                                                                )
+                                                                
+                                                                # Add a "Mark as reviewed" checkbox
+                                                                reviewed = st.checkbox("Mark as reviewed", 
+                                                                                      key=f"reviewed_{target_language}_{item_key}",
+                                                                                      value=item_key in st.session_state.edited_translations.get(f"reviewed_{target_language}", set()))
+                                                                
+                                                                if reviewed:
+                                                                    if f"reviewed_{target_language}" not in st.session_state.edited_translations:
+                                                                        st.session_state.edited_translations[f"reviewed_{target_language}"] = set()
+                                                                    st.session_state.edited_translations[f"reviewed_{target_language}"].add(item_key)
+                                                                    reviewed_counter += 1
+                                                                elif f"reviewed_{target_language}" in st.session_state.edited_translations and item_key in st.session_state.edited_translations[f"reviewed_{target_language}"]:
+                                                                    st.session_state.edited_translations[f"reviewed_{target_language}"].remove(item_key)
+                                                                
+                                                                # Check if the text was modified
+                                                                if edited_text != text_content:
+                                                                    st.session_state.edited_translations[lang_key][item_key] = edited_text
+                                                                    modified_translations = True
+                                                                    
+                                                                    # Update the translation in our content
+                                                                    override['text'] = edited_text
                                             
+                                            # Handle text nodes
+                                            elif "text" in node:
+                                                item_counter += 1
+                                                
+                                                # Get the text content
+                                                text_content = node['text'] if isinstance(node['text'], str) else node['text'].get('html', '')
+                                                
+                                                # Skip if filtered and doesn't match
+                                                if filter_text and filter_text.lower() not in text_content.lower():
+                                                    continue
+                                                
+                                                # Create a unique key for this text item
+                                                item_key = f"{node_id}_text"
+                                                
+                                                # Find the original text if available
+                                                original_text = "Original text not available"
+                                                for orig_node in st.session_state.parsed_nodes:
+                                                    if orig_node.get('nodeId') == node_id and "text" in orig_node:
+                                                        original_text = orig_node.get('text', 'No text')
+                                                        break
+                                                
+                                                # Create an expander for each translation item
+                                                with st.expander(f"Item #{item_counter}: Text Node", expanded=False):
+                                                    col1, col2 = st.columns(2)
+                                                    
+                                                    with col1:
+                                                        st.caption("Original Text")
+                                                        st.code(original_text, language=None)
+                                                        st.caption(f"Node ID: {node_id[:8]}...")
+                                                    
+                                                    with col2:
+                                                        st.caption(f"Translation ({target_language})")
+                                                        # Use the stored edited value or the original translation
+                                                        current_value = st.session_state.edited_translations[lang_key].get(item_key, text_content)
+                                                        
+                                                        # Create a text area for editing
+                                                        edited_text = st.text_area(
+                                                            "Edit translation",
+                                                            value=current_value,
+                                                            height=max(100, min(300, 100 + 20 * text_content.count('\n'))),
+                                                            key=f"edit_{target_language}_{item_key}",
+                                                            label_visibility="collapsed"
+                                                        )
+                                                        
+                                                        # Add a "Mark as reviewed" checkbox
+                                                        reviewed = st.checkbox("Mark as reviewed", 
+                                                                              key=f"reviewed_{target_language}_{item_key}",
+                                                                              value=item_key in st.session_state.edited_translations.get(f"reviewed_{target_language}", set()))
+                                                        
+                                                        if reviewed:
+                                                            if f"reviewed_{target_language}" not in st.session_state.edited_translations:
+                                                                st.session_state.edited_translations[f"reviewed_{target_language}"] = set()
+                                                            st.session_state.edited_translations[f"reviewed_{target_language}"].add(item_key)
+                                                            reviewed_counter += 1
+                                                        elif f"reviewed_{target_language}" in st.session_state.edited_translations and item_key in st.session_state.edited_translations[f"reviewed_{target_language}"]:
+                                                            st.session_state.edited_translations[f"reviewed_{target_language}"].remove(item_key)
+                                                        
+                                                        # Check if the text was modified
+                                                        if edited_text != text_content:
+                                                            st.session_state.edited_translations[lang_key][item_key] = edited_text
+                                                            modified_translations = True
+                                                            
+                                                            # Update the translation in our content
+                                                            node['text'] = edited_text
+                                        
+                                        # Update progress bar
+                                        if total_items > 0:
+                                            progress_value = reviewed_counter / total_items
+                                            st.progress(progress_value, text=f"{reviewed_counter}/{total_items} items reviewed")
+                                        
+                                        # Add approval button
+                                        st.divider()
+                                        col1, col2 = st.columns([3, 1])
+                                        
+                                        with col1:
+                                            if modified_translations:
+                                                st.success("You've made changes to the translations.")
+                                            else:
+                                                st.info("No changes made to translations.")
+                                            
+                                            # Show review progress
+                                            if reviewed_counter == total_items:
+                                                st.success("All items have been reviewed!")
+                                            else:
+                                                st.warning(f"{total_items - reviewed_counter} items still need review.")
+                                        
+                                        with col2:
+                                            if st.button(f"Approve & Update Webflow", key=f"approve_{target_language}", use_container_width=True):
+                                                success, error = update_page_content(
+                                                    page_id=page_id,
+                                                    locale_id=locale_id,
+                                                    api_key=st.session_state.api_key,
+                                                    translated_content=translated_content
+                                                )
+                                                
+                                                if success:
+                                                    st.success(f"Successfully updated content for {target_language}")
+                                                    # Clear the edited translations for this language
+                                                    st.session_state.edited_translations[lang_key] = {}
+                                                    if f"reviewed_{target_language}" in st.session_state.edited_translations:
+                                                        st.session_state.edited_translations[f"reviewed_{target_language}"] = set()
+                                                else:
+                                                    st.error(f"Failed to update content for {target_language}: {error}")
+                                    
+                                    with tab2:
+                                        st.subheader("Full JSON View")
+                                        st.json(translated_content)
+                                        
+                                        if st.button("Update Webflow from JSON", key=f"json_update_{target_language}"):
                                             success, error = update_page_content(
                                                 page_id=page_id,
                                                 locale_id=locale_id,
                                                 api_key=st.session_state.api_key,
-                                                translated_content=final_content
+                                                translated_content=translated_content
                                             )
                                             
                                             if success:
                                                 st.success(f"Successfully updated content for {target_language}")
                                             else:
                                                 st.error(f"Failed to update content for {target_language}: {error}")
-                                        except json.JSONDecodeError as e:
-                                            st.error(f"Invalid JSON format: {str(e)}")
-                                            print(f"\nJSON Decode Error: {str(e)}")
-                                            print(f"Problematic JSON:\n{edited_translation_str}")
-                                        except Exception as e:
-                                            st.error(f"Error during update: {str(e)}")
                                 
                                 # Update progress
                                 progress = (index + 1) / len(target_languages)

@@ -241,11 +241,23 @@ def translate_content_with_openai(parsed_nodes, target_language, api_key):
         print("Content to translate:")
         print(json.dumps(parsed_nodes, indent=2))
         
+        # Get all terms from the glossary that should not be translated
+        do_not_translate_terms = []
+        if 'glossary' in st.session_state:
+            for category, terms in st.session_state.glossary.items():
+                do_not_translate_terms.extend(terms)
+        
+        # Format the terms as a bulleted list for the prompt
+        terms_list = "\n".join([f"- {term}" for term in do_not_translate_terms])
+        
         # Prepare the system message explaining what we want
         system_message = f"""You are a professional translator with 20 years of experience.  
         Translate only the "text" values in the JSON to {target_language}. 
-        Follow these rules when translating:
-
+        
+        DO NOT TRANSLATE the following terms - keep them exactly as they appear:
+        {terms_list}
+        
+        Follow these additional rules when translating:
         - When encountering the word "Deriv" and any succeeding word, analyze the context and based on it, keep it in English. For example, "Deriv Blog," "Deriv Life," "Deriv Bot," and "Deriv App" should be kept in English.
         - Keep product names such as P2P, MT5, Deriv X, Deriv cTrader, SmartTrader, Deriv Trader, Deriv GO, Deriv Bot, and Binary Bot in English.
         
@@ -258,7 +270,7 @@ def translate_content_with_openai(parsed_nodes, target_language, api_key):
         # Make the API call
         try:
             response = client.chat.completions.create(
-                model="gpt-4",
+                model="gpt-4o-mini",
                 messages=[
                     {"role": "system", "content": system_message},
                     {"role": "user", "content": user_message}

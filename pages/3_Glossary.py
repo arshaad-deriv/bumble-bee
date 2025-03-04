@@ -128,6 +128,38 @@ if 'glossary' not in st.session_state:
             'Most Trusted Broker',
             'UF Awards 2024'
         ],
+        'address': [
+            "17 Rue d'Antin, 75002 Paris",
+            "181, Leoforos Archiepiskopou Makariou III Avenue 15 Business Centre, 1st Floor, 3030, Limassol Cyprus",
+            "2nd Floor, Suite 2, Omar Hodge Building, 325 Waterfront Drive, Road Town, Tortola, VG 1110, British Virgin Islands",
+            "67-1 & 69-1, Jalan KLJ 6, Taman Kota Laksamana Jaya, Melaka 75200",
+            "72 Limassol Avenue, 12th floor, Asteroid Business Centre, 2014 Strovolos, Nicosia",
+            "80 Robinson Road, #11-03, Singapore 068898",
+            "AJIB Building, No 12A & 12B, 3rd Floor, Al Bonouk Street, Al Abdali Boulevard, Amman - Jordan.",
+            "Cayman Enterprise City, Strathvale House, 2nd Floor, 90N Church St, George Town, Cayman Islands",
+            "Deriv HQ, 3500, Jalan Teknokrat 3, 63000 Cyberjaya, Selangor",
+            "Deriv Technologies Limited, Apex Forbury Road, Reading RG1 1AX",
+            "E-5-6, Soho Ipoh 2, Jalan Sultan Idris Shah, Ipoh 30000, Perak",
+            "Edificio Atrium, Piso 2, Guido Spano Esq. Doctor Morra, Asunción 1849",
+            "F16, Level 1, Paragon Labuan, Jalan Tun Mustapha, Labuan 87000, Sabah",
+            "First Floor, 68 - 72 Leonard Street, London, EC2A 4QX",
+            "Kemperplatz 1 Mitte D, 10785 Berlin, Germany",
+            "Level 2 East Wing, Kigali Heights, KG7 Avenue, Kigali",
+            "Level 3, W Business Centre, Triq Dun Karm, Birkirkara, BKR 9033",
+            "Nicosia",
+            "No. 1-23A, First Floor, Paragon, Jalan Tun Mustapha, 87008, Federal Territory of Labuan, Malaysia.",
+            "Office 1902, Jumeirah Business Center 1, JLT Cluster G",
+            "Room 408A, Empire Centre, 68 Mody Road, Tsim Sha Tsui East, Kowloon, Hong Kong",
+            "Suite 5, One Cornet Street, St Peter Port, Guernsey GY1 1 BZ",
+            "World Trade Center Ciudad del Este",
+            "Yumiwork, Lolam building, Kumul Highway, Land # 11/OD22/021, Port Vila, Vanuatu"
+        ],
+        'list_of_people': [  # New category
+            'Jean Yeas',
+            'Rakshit',
+            'Chris Horn',
+            'Derrick'
+        ],
         'custom_terms': []  # For user-added terms
     }
 
@@ -185,6 +217,8 @@ def import_glossary_from_csv(csv_file):
             'product_names': [],
             'technical_terms': [],
             'awards_name': [],
+            'address': [],
+            'list_of_people': [],  # Add new category here too
             'custom_terms': []
         }
         
@@ -330,7 +364,7 @@ def main():
             categories_to_delete = st.multiselect(
                 "Select categories to delete",
                 options=[cat for cat in st.session_state.glossary.keys() 
-                        if cat not in ['product_names', 'technical_terms', 'awards_name', 'custom_terms']],
+                        if cat not in ['product_names', 'technical_terms', 'awards_name', 'address', 'list_of_people', 'custom_terms']],
                 help="Default categories cannot be deleted"
             )
             
@@ -468,7 +502,10 @@ def main():
                         'P2P',
                         'SmartTrader',
                         'Deriv Trader',
-                        'Binary Bot'
+                        'Binary Bot',
+                        'Forex',
+                        'CFD',
+                        'CFDs'                   
                     ],
                     'technical_terms': [
                         # Web Technologies
@@ -584,6 +621,45 @@ def main():
                         'Most Innovative Broker— MEA 2025',
                         'Most Trusted Broker',
                         'UF Awards 2024'
+                    ],
+                    'address': [
+                        "17 Rue d'Antin, 75002 Paris",
+                        "181, Leoforos Archiepiskopou Makariou III Avenue 15 Business Centre, 1st Floor, 3030, Limassol Cyprus",
+                        "2nd Floor, Suite 2, Omar Hodge Building, 325 Waterfront Drive, Road Town, Tortola, VG 1110, British Virgin Islands",
+                        "67-1 & 69-1, Jalan KLJ 6, Taman Kota Laksamana Jaya, Melaka 75200",
+                        "72 Limassol Avenue, 12th floor, Asteroid Business Centre, 2014 Strovolos, Nicosia",
+                        "80 Robinson Road, #11-03, Singapore 068898",
+                        "AJIB Building, No 12A & 12B, 3rd Floor, Al Bonouk Street, Al Abdali Boulevard, Amman - Jordan.",
+                        "Cayman Enterprise City, Strathvale House, 2nd Floor, 90N Church St, George Town, Cayman Islands",
+                        "Deriv HQ, 3500, Jalan Teknokrat 3, 63000 Cyberjaya, Selangor",
+                        "Deriv Technologies Limited, Apex Forbury Road, Reading RG1 1AX",
+                        "E-5-6, Soho Ipoh 2, Jalan Sultan Idris Shah, Ipoh 30000, Perak",
+                        "Edificio Atrium, Piso 2, Guido Spano Esq. Doctor Morra, Asunción 1849",
+                        "F16, Level 1, Paragon Labuan, Jalan Tun Mustapha, Labuan 87000, Sabah",
+                        "First Floor, 68 - 72 Leonard Street, London, EC2A 4QX",
+                        "Kemperplatz 1 Mitte D, 10785 Berlin, Germany",
+                        "Level 2 East Wing, Kigali Heights, KG7 Avenue, Kigali",
+                        "Level 3, W Business Centre, Triq Dun Karm, Birkirkara, BKR 9033",
+                        "Nicosia",
+                        "No. 1-23A, First Floor, Paragon, Jalan Tun Mustapha, 87008, Federal Territory of Labuan, Malaysia.",
+                        "Office 1902, Jumeirah Business Center 1, JLT Cluster G",
+                        "Room 408A, Empire Centre, 68 Mody Road, Tsim Sha Tsui East, Kowloon, Hong Kong",
+                        "Suite 5, One Cornet Street, St Peter Port, Guernsey GY1 1 BZ",
+                        "World Trade Center Ciudad del Este",
+                        "Yumiwork, Lolam building, Kumul Highway, Land # 11/OD22/021, Port Vila, Vanuatu"
+                    ],
+                    'list_of_people': [  # New category
+                        'Derrick',
+                        'Joanna Frendo',
+                        'Seema Hallon',
+                        'Louise Wolf',
+                        'Jean-Yves Sireau',
+                        'Rakshit Choudhary',
+                        'Chris Horn',
+                        'Derrick',
+                        'Louise Wolf',
+                        'Jennice Lourdsamy',
+                        'Prakash Bhudia',          
                     ],
                     'custom_terms': []
                 }

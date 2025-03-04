@@ -3,6 +3,7 @@ import requests
 import json
 import openai
 import logging
+import time
 
 # Set up logging configuration at the top of the file
 logging.basicConfig(
@@ -41,6 +42,66 @@ COLLECTION_CONFIGS = {
         "fields_to_preserve": ['slug', 'category-3', 'order-number'],
         "display_name": "Help Center Question",
         "item_identifier": "question"
+    },
+    "Tncs": {
+        "fields_to_translate": [
+            'name',
+            'content',
+            'meta-description',
+            'page-title'
+        ],
+        "fields_to_preserve": ['slug', 'order', 'category'],
+        "display_name": "Tncs",
+        "item_identifier": "name"
+    },
+    "Terms and Conditions": {
+        "fields_to_translate": [
+            'name',
+            'content',
+            'pdf-name-1',
+            'description',
+            'page-title'
+        ],
+        "fields_to_preserve": ['slug', 'order', 'category', 'pdf-link-1', 'link-1'],
+        "display_name": "Terms and Conditions",
+        "item_identifier": "name"
+    },
+    "Trading Specifications": {
+        "fields_to_translate": [            
+        ],
+        "fields_to_preserve": [
+            'type'
+        ],
+        "display_name": "Trading Specifications",
+        "item_identifier": "name"
+    },
+    "Help Center Categories": {
+        "fields_to_translate": [
+            'name',
+            'page-title',
+            'meta-description'
+        ],
+        "fields_to_preserve": [
+            'slug',
+            'type',
+            'order-number',
+            'main-questions',
+        ],
+        "display_name": "Help Center Category",
+        "item_identifier": "name"
+    },
+    "Help Center Questions": {
+        "fields_to_translate": [
+            'name',                    # Question title
+            'answer',                 # Answer content
+        ],
+        "fields_to_preserve": [
+            'slug',                   # URL slug
+            'category',            # Category identifier
+            'order-number'
+        ],
+        "display_name": "Help Center Question",
+        "item_identifier": "question"  # Use question field as identifier
     }
 }
 
@@ -131,12 +192,22 @@ def get_collection_items(site_id, collection_id, api_key, offset=0, limit=100):
         "limit": limit
     }
     
+    logger.info(f"Fetching collection items: URL={url}, offset={offset}, limit={limit}")
+    
     try:
         response = requests.get(url, headers=headers, params=params)
         response.raise_for_status()
-        return response.json()
+        data = response.json()
+        
+        # Log pagination info for debugging
+        pagination = data.get('pagination', {})
+        logger.info(f"Pagination info: total={pagination.get('total', 'N/A')}, offset={pagination.get('offset', 'N/A')}, limit={pagination.get('limit', 'N/A')}")
+        
+        return data
     except Exception as e:
-        st.error(f"Error fetching collection items: {str(e)}")
+        error_msg = f"Error fetching collection items: {str(e)}"
+        logger.error(error_msg)
+        st.error(error_msg)
         return None
 
 def translate_collection_item(collection_id, item_id, api_key, cms_locale_id):
@@ -204,18 +275,54 @@ def generate_curl_command(collection_id, item_id, api_key, cms_locale_id, field_
 def translate_with_openai(text, target_language, api_key):
     """Translate text using OpenAI"""
     try:
-        logger.info(f"\n{'='*50}\nTRANSLATING TO {target_language}\n{'='*50}")
-        logger.info(f"Original text:\n{text[:200]}..." if len(text) > 200 else text)
+        # Log translation request details
+        logger.info(f"\n{'='*50}")
+        logger.info("TRANSLATION REQUEST DETAILS")
+        logger.info(f"{'='*50}")
+        logger.info(f"Target Language: {target_language}")
+        logger.info(f"Input Text Length: {len(text)} characters")
+        logger.info(f"Input Text Preview: {text[:200]}..." if len(text) > 200 else text)
+        
+        # Log glossary terms being used
+        do_not_translate_terms = []
+        if 'glossary' in st.session_state:
+            for category, terms in st.session_state.glossary.items():
+                do_not_translate_terms.extend(terms)
+            logger.info(f"\nGlossary Terms Applied:")
+            logger.info(f"Total Terms: {len(do_not_translate_terms)}")
+            logger.info("Terms List:")
+            for term in do_not_translate_terms:
+                logger.info(f"- {term}")
         
         client = openai.OpenAI(api_key=api_key)
         
+        # Format terms for prompt
+        terms_list = "\n".join([f"- {term}" for term in do_not_translate_terms])
+        
         system_message = f"""You are a professional translator with 20 years of experience.
         Translate the text to {target_language}.
-        Follow these rules when translating:
+        
+        DO NOT TRANSLATE the following terms - keep them exactly as they appear:
+        {terms_list}
+        
+        Follow these additional rules when translating:
         - When encountering the word "Deriv" and any succeeding word, keep it in English. For example, "Deriv Blog," "Deriv Life," "Deriv Bot," and "Deriv App" should be kept in English.
         - Keep product names such as P2P, MT5, Deriv X, Deriv cTrader, SmartTrader, Deriv Trader, Deriv GO, Deriv Bot, and Binary Bot in English.
+        
         Return only the translation, no explanations."""
         
+        # Log OpenAI request
+        logger.info(f"\n{'='*50}")
+        logger.info("OPENAI API REQUEST")
+        logger.info(f"{'='*50}")
+        logger.info(f"Model: gpt-4o-mini")
+        logger.info("System Message:")
+        logger.info(system_message)
+        logger.info("\nUser Message:")
+        logger.info(text)
+        
+        # Make API call with timing
+        start_time = time.time()
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
@@ -224,15 +331,37 @@ def translate_with_openai(text, target_language, api_key):
             ],
             temperature=0.3
         )
+        end_time = time.time()
+        
+        # Log OpenAI response
+        logger.info(f"\n{'='*50}")
+        logger.info("OPENAI API RESPONSE")
+        logger.info(f"{'='*50}")
+        logger.info(f"Response Time: {end_time - start_time:.2f} seconds")
         
         translated_text = response.choices[0].message.content.strip()
-        logger.info(f"Translated text:\n{translated_text[:200]}..." if len(translated_text) > 200 else translated_text)
-        logger.info(f"{'='*50}\n")
+        
+        # Log translation result
+        logger.info(f"\nTranslated Text Preview: {translated_text[:200]}..." if len(translated_text) > 200 else translated_text)
+        
+        # Log term preservation check
+        logger.info(f"\n{'='*50}")
+        logger.info("TERM PRESERVATION CHECK")
+        logger.info(f"{'='*50}")
+        for term in do_not_translate_terms:
+            if term in text and term in translated_text:
+                logger.info(f"✅ Term preserved: {term}")
+            elif term in text and term not in translated_text:
+                logger.warning(f"⚠️ Term not preserved: {term}")
+        
+        logger.info(f"\n{'='*50}\n")
         
         return translated_text, None
     except Exception as e:
-        logger.error(f"Translation error: {str(e)}")
-        return None, f"Translation error: {str(e)}"
+        error_msg = f"Translation error: {str(e)}"
+        logger.error(error_msg)
+        logger.error(f"{'='*50}\n")
+        return None, error_msg
 
 def execute_curl_command(collection_id, item_id, api_key, cms_locale_id, field_data):
     """Execute the PATCH request and return response"""
@@ -280,6 +409,66 @@ def get_collections(site_id, api_key):
     except Exception as e:
         st.error(f"Error fetching collections: {str(e)}")
         return []
+
+def get_all_collection_items(site_id, collection_id, api_key):
+    """Get all collection items with pagination handling"""
+    all_items = []
+    offset = 0
+    limit = 100  # Maximum allowed by API
+    
+    # Create a progress placeholder
+    progress_placeholder = st.empty()
+    status_placeholder = st.empty()
+    
+    # First request to get total count
+    status_placeholder.info(f"Fetching initial batch of items...")
+    response = get_collection_items(site_id, collection_id, api_key, offset, limit)
+    
+    if not response or 'items' not in response:
+        status_placeholder.error("Failed to fetch collection items")
+        return []
+    
+    # Get total from first response - properly access the pagination object
+    total = response.get('pagination', {}).get('total', 0)
+    items = response.get('items', [])
+    all_items.extend(items)
+    
+    # Update progress
+    progress = min(len(all_items) / max(total, 1), 1.0)
+    progress_placeholder.progress(progress)
+    status_placeholder.info(f"Loaded {len(all_items)} of {total} items...")
+    
+    # Continue fetching if there are more items
+    while len(all_items) < total:
+        offset += limit
+        status_placeholder.info(f"Fetching items {offset} to {min(offset + limit, total)}...")
+        response = get_collection_items(site_id, collection_id, api_key, offset, limit)
+        
+        if not response or 'items' not in response:
+            status_placeholder.warning(f"Error fetching batch at offset {offset}")
+            break
+        
+        items = response.get('items', [])
+        if not items:
+            break
+            
+        all_items.extend(items)
+        
+        # Update progress
+        progress = min(len(all_items) / max(total, 1), 1.0)
+        progress_placeholder.progress(progress)
+        status_placeholder.info(f"Loaded {len(all_items)} of {total} items...")
+        
+        # Optional: Add a small delay to avoid rate limiting
+        time.sleep(0.2)
+    
+    # Clear the progress indicators when done
+    if len(all_items) >= total:
+        status_placeholder.success(f"Successfully loaded all {total} items!")
+    else:
+        status_placeholder.warning(f"Loaded {len(all_items)} of {total} items. Some items may be missing.")
+    
+    return all_items
 
 def main():
     st.title("J.Jonah Jameson - Get it to the front page")
@@ -331,26 +520,48 @@ def main():
                 
                 # Extract collection ID and fetch items
                 collection_id = selected_collection.split('(')[-1].strip(')')
-                with st.spinner("Fetching collection items..."):
-                    items = get_collection_items(
+                
+                # Add a loading message
+                with st.status("Loading collection items...", expanded=True) as status:
+                    status.update(label="Fetching collection items... This may take a while for large collections.")
+                    
+                    # Use the improved pagination function
+                    items = get_all_collection_items(
                         st.session_state.site_id,
                         collection_id,
                         st.session_state.api_key
                     )
                     
-                    if items and 'items' in items:
+                    if items:
                         # Parse items based on collection type
-                        parsed_items = parse_collection_items(items['items'], collection_type, config)
+                        parsed_items = parse_collection_items(items, collection_type, config)
+                        status.update(label=f"Loaded {len(parsed_items)} items", state="complete")
                         
+                        # Display pagination info
+                        st.info(f"Successfully loaded {len(parsed_items)} items from the collection.")
+                        
+                        # Add a search filter for large collections
+                        search_term = st.text_input("Filter items by name:", placeholder="Type to filter...")
+                        
+                        # Filter items based on search term
+                        filtered_items = parsed_items
+                        if search_term:
+                            filtered_items = [item for item in parsed_items 
+                                             if search_term.lower() in item['identifier'].lower() or 
+                                                search_term.lower() in item['slug'].lower()]
+                            st.write(f"Found {len(filtered_items)} items matching '{search_term}'")
+                        
+                        # Create a selectbox with filtered items
+                        item_options = ['All'] + [f"{item['identifier']} ({item['slug']})" for item in filtered_items]
                         selected_item = st.selectbox(
-                            f"Select {config['display_name']} (Total: {len(parsed_items)})",
-                            options=['All'] + [f"{item['identifier']} ({item['slug']})" for item in parsed_items]
+                            f"Select {config['display_name']} (Total: {len(filtered_items)} of {len(parsed_items)})",
+                            options=item_options
                         )
                         
                         if selected_item != 'All':
                             selected_slug = selected_item.split('(')[-1].strip(')')
                             selected_data = next(
-                                (item for item in parsed_items if item['slug'] == selected_slug),
+                                (item for item in filtered_items if item['slug'] == selected_slug),
                                 None
                             )
                             
