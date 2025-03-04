@@ -154,11 +154,17 @@ if 'glossary' not in st.session_state:
             "World Trade Center Ciudad del Este",
             "Yumiwork, Lolam building, Kumul Highway, Land # 11/OD22/021, Port Vila, Vanuatu"
         ],
-        'list_of_people': [  # New category
+        'list_of_people': [
+            'Chris Horn',
+            'Derrick',
             'Jean Yeas',
             'Rakshit',
-            'Chris Horn',
-            'Derrick'
+            'Jean-Yves Sireau',
+            'Louise Wolf',
+            'Seema Hallon',
+            'Joanna Frendo',
+            'Jennice Lourdsamy',
+            'Prakash Bhudia'
         ],
         'custom_terms': []  # For user-added terms
     }
@@ -648,17 +654,17 @@ def main():
                         "World Trade Center Ciudad del Este",
                         "Yumiwork, Lolam building, Kumul Highway, Land # 11/OD22/021, Port Vila, Vanuatu"
                     ],
-                    'list_of_people': [  # New category
-                        'Joanna Frendo',
-                        'Seema Hallon',
-                        'Louise Wolf',
-                        'Jean-Yves Sireau',
-                        'Rakshit Choudhary',
+                    'list_of_people': [
                         'Chris Horn',
                         'Derrick',
+                        'Jean Yeas',
+                        'Rakshit',
+                        'Jean-Yves Sireau',
                         'Louise Wolf',
+                        'Seema Hallon',
+                        'Joanna Frendo',
                         'Jennice Lourdsamy',
-                        'Prakash Bhudia',          
+                        'Prakash Bhudia'
                     ],
                     'custom_terms': []
                 }
