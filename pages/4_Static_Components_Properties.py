@@ -20,7 +20,7 @@ selected = option_menu(
     options=["Component Content", "Component Properties"],
     icons=["file-text", "gear"],
     menu_icon="cast",
-    default_index=0,
+    default_index=1,  # Set to 1 to highlight the Properties tab
     orientation="horizontal",
     styles={
         "container": {"padding": "0!important", "background-color": "#fafafa"},
@@ -40,9 +40,9 @@ selected = option_menu(
     }
 )
 
-# Redirect to the other page if Component Properties is selected
-if selected == "Component Properties":
-    st.switch_page("pages/4_Static_Components_Properties.py")
+# Redirect to the other page if Component Content is selected
+if selected == "Component Content":
+    st.switch_page("pages/1_Static_Components_Content.py")
 
 # Initialize session state
 if 'site_id' not in st.session_state:
@@ -73,6 +73,16 @@ if 'translation_progress' not in st.session_state:
     st.session_state.translation_progress = 0
 if 'excluded_components' not in st.session_state:
     st.session_state.excluded_components = {}  # Will store {name: count}
+
+# Ensure locales are fetched if credentials are set
+if 'locales' not in st.session_state and st.session_state.site_id and st.session_state.api_key:
+    with st.spinner("Fetching site locales..."):
+        locales = get_site_locales(st.session_state.site_id, st.session_state.api_key)
+        if locales:
+            st.session_state.locales = locales
+            st.success(f"Successfully fetched {len(locales)} locales!")
+        else:
+            st.warning("No locales found or error fetching locales.")
 
 # Add sidebar configuration
 with st.sidebar:
@@ -376,8 +386,243 @@ def update_component_content(site_id, component_id, locale_id, nodes, api_key):
         print(f"\nERROR: {error_msg}")
         return None, error_msg
 
+def get_component_properties(site_id, component_id, api_key, locale_id=None):
+    """Get component properties with pagination handling"""
+    base_url = f"https://api.webflow.com/v2/sites/{site_id}/components/{component_id}/properties"
+    headers = {
+        "accept": "application/json",
+        "authorization": f"Bearer {api_key}"
+    }
+    
+    # Add locale_id as a query parameter if provided
+    params = {}
+    if locale_id:
+        params["localeId"] = locale_id
+    
+    all_properties = []
+    offset = 0
+    limit = 100  # Maximum allowed by API
+    
+    while True:
+        # Add pagination parameters
+        params["limit"] = limit
+        params["offset"] = offset
+        
+        print("\n" + "="*50)
+        print(f"API REQUEST - Get Component Properties (Offset: {offset})")
+        print("="*50)
+        print(f"URL: {base_url}")
+        print(f"Params: {params}")
+        print("\nHeaders:")
+        for key, value in headers.items():
+            if key.lower() == 'authorization':
+                print(f"{key}: Bearer ****{value[-4:]}")
+            else:
+                print(f"{key}: {value}")
+        
+        try:
+            response = requests.get(base_url, headers=headers, params=params)
+            response.raise_for_status()
+            data = response.json()
+            
+            # Add properties from this batch
+            current_properties = data.get('properties', [])
+            all_properties.extend(current_properties)
+            
+            # Get pagination info
+            pagination = data.get('pagination', {})
+            total = pagination.get('total', 0)
+            
+            print(f"\nRetrieved {len(current_properties)} properties (Total: {len(all_properties)}/{total})")
+            
+            # Print the complete API response for debugging
+            print("\n" + "="*50)
+            print("COMPLETE API RESPONSE")
+            print("="*50)
+            print(json.dumps(data, indent=2))
+            
+            # Check if we've got all properties
+            if len(all_properties) >= total:
+                break
+                
+            # Update offset for next batch
+            offset += limit
+            
+        except Exception as e:
+            print(f"\nERROR: {str(e)}")
+            st.error(f"Error fetching component properties: {str(e)}")
+            return None
+    
+    # Return complete data with all properties
+    return {
+        "componentId": data.get("componentId"),
+        "properties": all_properties
+    }
+
+def parse_component_properties(properties_data):
+    """Parse component properties to extract property IDs and text content"""
+    parsed_properties = []
+    
+    for prop in properties_data.get('properties', []):
+        # Only include properties that have text content
+        if prop.get('type') in ['Plain Text', 'Rich Text'] and prop.get('text'):
+            property_data = {
+                "propertyId": prop['propertyId'],
+                "type": prop['type'],
+                "label": prop.get('label', ''),
+            }
+            
+            # Add the appropriate text field based on property type
+            if prop['type'] == 'Plain Text' and 'text' in prop.get('text', {}):
+                property_data["text"] = prop['text']['text']
+            elif prop['type'] == 'Rich Text' and 'html' in prop.get('text', {}):
+                property_data["text"] = prop['text']['html']
+                
+            parsed_properties.append(property_data)
+    
+    return {"properties": parsed_properties}
+
+def translate_properties_with_openai(parsed_properties, target_language, api_key):
+    """Translate properties using OpenAI while preserving structure"""
+    try:
+        # First verify we have valid inputs
+        if not parsed_properties:
+            return None, "No content to translate"
+        if not target_language:
+            return None, "No target language specified"
+        if not api_key:
+            return None, "OpenAI API key is missing"
+            
+        client = openai.OpenAI(api_key=api_key)
+        
+        # Print debug information
+        print("\n" + "="*50)
+        print("TRANSLATION REQUEST")
+        print("="*50)
+        print(f"Target Language: {target_language}")
+        print("Properties to translate:")
+        print(json.dumps(parsed_properties, indent=2))
+        
+        # Get all terms from the glossary that should not be translated
+        do_not_translate_terms = []
+        if 'glossary' in st.session_state:
+            for category, terms in st.session_state.glossary.items():
+                do_not_translate_terms.extend(terms)
+        
+        # Format the terms as a bulleted list for the prompt
+        terms_list = "\n".join([f"- {term}" for term in do_not_translate_terms])
+        
+        # Prepare the system message explaining what we want
+        system_message = f"""You are a professional translator with 20 years of experience.  
+        Translate only the "text" values in the JSON to {target_language}. 
+        
+        DO NOT TRANSLATE the following terms - keep them exactly as they appear:
+        {terms_list}
+        
+        Follow these additional rules when translating:
+        - When encountering the word "Deriv" and any succeeding word, analyze the context and based on it, keep it in English. For example, "Deriv Blog," "Deriv Life," "Deriv Bot," and "Deriv App" should be kept in English.
+        - Keep product names such as P2P, MT5, Deriv X, Deriv cTrader, SmartTrader, Deriv Trader, Deriv GO, Deriv Bot, and Binary Bot in English.
+        
+        Keep all other JSON structure and values exactly the same.
+        Return only the JSON, no explanations."""
+        
+        # Prepare the JSON for translation
+        user_message = f"Translate this JSON content. Original JSON:\n{json.dumps(parsed_properties, indent=2)}"
+        
+        # Make the API call
+        try:
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": system_message},
+                    {"role": "user", "content": user_message}
+                ],
+                temperature=0.3
+            )
+            
+            # Print the raw response for debugging
+            print("\nOpenAI Response:")
+            print(response)
+            
+            # Extract and validate the response content
+            response_content = response.choices[0].message.content
+            if not response_content:
+                return None, "Empty response from OpenAI"
+                
+            # Try to parse the JSON response
+            try:
+                translated_json = json.loads(response_content)
+                
+                # Format the translated properties for the update API
+                formatted_properties = []
+                for prop in translated_json.get('properties', []):
+                    formatted_prop = {
+                        "propertyId": prop['propertyId']
+                    }
+                    
+                    # Add the appropriate field based on property type
+                    if prop['type'] == 'Plain Text':
+                        formatted_prop["text"] = prop['text']
+                    elif prop['type'] == 'Rich Text':
+                        formatted_prop["text"] = prop['text']
+                        
+                    formatted_properties.append(formatted_prop)
+                
+                return {"properties": formatted_properties}, None
+            except json.JSONDecodeError as e:
+                print(f"JSON Parse Error: {str(e)}")
+                print("Raw response content:")
+                print(response_content)
+                return None, f"Failed to parse OpenAI response as JSON: {str(e)}"
+                
+        except Exception as e:
+            print(f"OpenAI API Error: {str(e)}")
+            return None, f"OpenAI API Error: {str(e)}"
+            
+    except Exception as e:
+        print(f"Unexpected Error: {str(e)}")
+        return None, f"Translation error: {str(e)}"
+
+def update_component_properties(site_id, component_id, locale_id, properties, api_key):
+    """Update component properties with translated text"""
+    url = f"https://api.webflow.com/v2/sites/{site_id}/components/{component_id}/properties"
+    
+    headers = {
+        "accept": "application/json",
+        "authorization": f"Bearer {api_key}",
+        "content-type": "application/json"
+    }
+    
+    # Add locale_id as a query parameter
+    params = {"localeId": locale_id}
+    
+    print("\n" + "="*50)
+    print("UPDATE COMPONENT PROPERTIES REQUEST")
+    print("="*50)
+    print(f"URL: {url}")
+    print(f"Params: {params}")
+    print("\nHeaders:")
+    for key, value in headers.items():
+        if key.lower() == 'authorization':
+            print(f"{key}: Bearer ****{value[-4:]}")
+        else:
+            print(f"{key}: {value}")
+    print("\nPayload:")
+    print(json.dumps(properties, indent=2))
+    
+    try:
+        response = requests.post(url, headers=headers, params=params, json=properties)
+        print("\nResponse Status:", response.status_code)
+        print("Response Body:", response.text)
+        response.raise_for_status()
+        return response.json(), None
+    except Exception as e:
+        error_msg = f"Error updating component properties: {str(e)}"
+        print(f"\nERROR: {error_msg}")
+        return None, error_msg
+
 def main():
-    st.title("Static Components Manager")
+    st.title("Static Components Properties Manager")
     
     # 1. Credentials Form
     with st.form("credentials_form"):
@@ -405,13 +650,6 @@ def main():
         st.stop()
     
     # 2. Fetch and Display Locales
-    if 'locales' not in st.session_state:
-        with st.spinner("Fetching site locales..."):
-            locales = get_site_locales(st.session_state.site_id, st.session_state.api_key)
-            if locales:
-                st.session_state.locales = locales
-                st.success(f"Successfully fetched {len(locales)} locales!")
-    
     if st.session_state.get('locales'):
         st.subheader("Available Locales")
         locale_data = {
@@ -487,33 +725,33 @@ def main():
             if 'selected_languages' not in st.session_state:
                 st.session_state.selected_languages = []
             
-            # 6. View Content Button
-            if (st.button("View Component Content", key="view_component_button") or 
+            # 6. View Content Button - Updated for properties
+            if (st.button("View Component Properties", key="view_component_button") or 
                 st.session_state.current_component_content is not None):
                 
-                # Only fetch content if we don't have it or if we're viewing a new component
+                # Only fetch properties if we don't have them or if we're viewing a new component
                 if (st.session_state.current_component_content is None or 
                     'last_viewed_component_id' not in st.session_state or 
                     st.session_state.last_viewed_component_id != component_id):
                     
-                    with st.spinner("Fetching component content..."):
-                        content = get_component_content(
+                    with st.spinner("Fetching component properties..."):
+                        content = get_component_properties(
                             site_id=st.session_state.site_id,
                             component_id=component_id,
                             api_key=st.session_state.api_key
                         )
                         if content:
                             st.session_state.current_component_content = content
-                            st.session_state.parsed_nodes = parse_component_content(content)
+                            st.session_state.parsed_nodes = parse_component_properties(content)
                             st.session_state.last_viewed_component_id = component_id
                 
-                if st.session_state.parsed_nodes and st.session_state.parsed_nodes['nodes']:
-                    st.subheader("Parsed Content")
+                if st.session_state.parsed_nodes and st.session_state.parsed_nodes.get('properties'):
+                    st.subheader("Parsed Properties")
                     st.json(st.session_state.parsed_nodes)
                     
                     # Translation section
                     if st.session_state.openai_key and st.session_state.locales:
-                        st.subheader("Translate Content")
+                        st.subheader("Translate Properties")
                         
                         # Create language selection with both tag and ID
                         locale_options = {
@@ -546,7 +784,7 @@ def main():
                                     st.session_state.current_translation_index = 0
                                     st.rerun()
                         
-                        # Handle ongoing translation
+                        # Handle ongoing translation - Updated for properties
                         if st.session_state.translation_in_progress:
                             progress_bar = st.progress(st.session_state.current_translation_index / len(st.session_state.selected_languages))
                             current_language = st.session_state.selected_languages[st.session_state.current_translation_index]
@@ -554,7 +792,7 @@ def main():
                             st.write(f"Translating {current_language} ({st.session_state.current_translation_index + 1}/{len(st.session_state.selected_languages)})")
                             
                             # Perform translation for current language
-                            translated_content, error = translate_content_with_openai(
+                            translated_properties, error = translate_properties_with_openai(
                                 st.session_state.parsed_nodes,
                                 locale_options[current_language]['tag'],
                                 st.session_state.openai_key
@@ -569,23 +807,23 @@ def main():
                                 
                                 # Create an expander for translation details
                                 with st.expander(f"Translation Details - {current_language}", expanded=True):
-                                    st.subheader("Translated Content")
-                                    st.json(translated_content)
+                                    st.subheader("Translated Properties")
+                                    st.json(translated_properties)
                                     
-                                    # Update the component content
-                                    result, error = update_component_content(
+                                    # Update the component properties
+                                    result, error = update_component_properties(
                                         site_id=st.session_state.site_id,
                                         component_id=component_id,
                                         locale_id=locale_id,
-                                        nodes=translated_content['nodes'],
+                                        properties=translated_properties,
                                         api_key=st.session_state.api_key
                                     )
                                     
                                     if error:
-                                        st.error(f"Failed to update content for {current_language}: {error}")
+                                        st.error(f"Failed to update properties for {current_language}: {error}")
                                         st.session_state.translation_in_progress = False
                                     else:
-                                        st.success(f"Successfully updated content for {current_language}")
+                                        st.success(f"Successfully updated properties for {current_language}")
                                         
                                         # Move to next language or finish
                                         st.session_state.current_translation_index += 1
@@ -606,7 +844,7 @@ def main():
                         if not st.session_state.locales:
                             st.warning("No locales available for translation")
                 else:
-                    st.info("No text content found in this component")
+                    st.info("No text properties found in this component")
 
 if __name__ == "__main__":
     main()
