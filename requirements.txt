@@ -1,6 +1,4 @@
 streamlit
 requests
 openai
-
-
-
+streamlit-option-menu
