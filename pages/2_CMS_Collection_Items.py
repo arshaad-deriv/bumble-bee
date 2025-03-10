@@ -4,6 +4,9 @@ import json
 import openai
 import logging
 import time
+import datetime
+import concurrent.futures
+from concurrent.futures import ThreadPoolExecutor
 
 # Set up logging configuration at the top of the file
 logging.basicConfig(
@@ -102,7 +105,20 @@ COLLECTION_CONFIGS = {
         ],
         "display_name": "Help Center Question",
         "item_identifier": "question"  # Use question field as identifier
-    }
+    },
+    "EU Blogs": {
+        "fields_to_translate": [
+            'disclaimer-2',
+            'post',
+            'summary',
+            'name',
+            'meta-description-2',
+            'page-title'
+        ],
+        "fields_to_preserve": ['slug', 'accumulators-option'],
+        "display_name": "Blog Post",
+        "item_identifier": "name"
+    },
 }
 
 def get_collection_config(collection_name):
@@ -272,8 +288,8 @@ def generate_curl_command(collection_id, item_id, api_key, cms_locale_id, field_
     
     return curl_command
 
-def translate_with_openai(text, target_language, api_key):
-    """Translate text using OpenAI"""
+def translate_with_openai_concurrent(text, target_language, api_key):
+    """Thread-safe version of translate_with_openai for concurrent processing"""
     try:
         # Log translation request details
         logger.info(f"\n{'='*50}")
@@ -324,12 +340,12 @@ def translate_with_openai(text, target_language, api_key):
         # Make API call with timing
         start_time = time.time()
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="o3-mini",
             messages=[
                 {"role": "system", "content": system_message},
                 {"role": "user", "content": text}
-            ],
-            temperature=0.3
+            ]
+            # temperature=0.3
         )
         end_time = time.time()
         
@@ -363,8 +379,8 @@ def translate_with_openai(text, target_language, api_key):
         logger.error(f"{'='*50}\n")
         return None, error_msg
 
-def execute_curl_command(collection_id, item_id, api_key, cms_locale_id, field_data):
-    """Execute the PATCH request and return response"""
+def execute_curl_command_concurrent(collection_id, item_id, api_key, cms_locale_id, field_data):
+    """Thread-safe version of execute_curl_command for concurrent processing"""
     url = f"https://api.webflow.com/v2/collections/{collection_id}/items/{item_id}"
     headers = {
         "accept": "application/json",
@@ -381,18 +397,63 @@ def execute_curl_command(collection_id, item_id, api_key, cms_locale_id, field_d
     
     try:
         response = requests.patch(url, headers=headers, json=payload)
-        response.raise_for_status()
-        return {
-            'status_code': response.status_code,
-            'response': response.json(),
-            'error': None
-        }
+        if response.status_code == 200:
+            return {
+                'status_code': response.status_code,
+                'response': response.json(),
+                'error': None
+            }
+        else:
+            return {
+                'status_code': response.status_code,
+                'response': response.text,
+                'error': f"HTTP Error: {response.status_code}"
+            }
     except Exception as e:
         return {
             'status_code': None,
             'response': None,
             'error': str(e)
         }
+
+def process_language_translation_concurrent(item_data, locale, openai_key, webflow_key, collection_id, config):
+    """Process translation for a single language using concurrent approach"""
+    # Store translations for this language
+    current_translations = {}
+    
+    # Translate each field - only translate fields in fields_to_translate
+    for key, value in item_data['data'].items():
+        if key in config['fields_to_translate'] and isinstance(value, str):
+            # Translate the field
+            translated_text, error = translate_with_openai_concurrent(value, locale['code'], openai_key)
+            if error:
+                return {
+                    'item': item_data['identifier'],
+                    'language': locale['name'],
+                    'status': 'error',
+                    'message': f"Error translating {key}: {error}"
+                }
+            current_translations[key] = translated_text
+        else:
+            # Preserve other fields
+            current_translations[key] = value
+    
+    # Execute update to Webflow
+    result = execute_curl_command_concurrent(
+        collection_id=collection_id,
+        item_id=item_data['id'],
+        api_key=webflow_key,
+        cms_locale_id=locale['id'],
+        field_data=current_translations
+    )
+    
+    # Return result
+    return {
+        'item': item_data['identifier'],
+        'language': locale['name'],
+        'status': 'success' if not result['error'] else 'error',
+        'message': result['error'] if result['error'] else 'Translation completed successfully'
+    }
 
 def get_collections(site_id, api_key):
     """Get list of collections from the site"""
@@ -482,245 +543,559 @@ def main():
         st.warning("Please add your OpenAI API key in the sidebar to enable translations")
         return
     
+    # Initialize session state variables if they don't exist
+    if 'cms_locales' not in st.session_state:
+        st.session_state.cms_locales = None
+    if 'collections' not in st.session_state:
+        st.session_state.collections = None
+    if 'selected_collection' not in st.session_state:
+        st.session_state.selected_collection = None
+    if 'collection_items' not in st.session_state:
+        st.session_state.collection_items = None
+    if 'parsed_items' not in st.session_state:
+        st.session_state.parsed_items = None
+    if 'selected_item' not in st.session_state:
+        st.session_state.selected_item = 'All'
+    if 'selected_mode' not in st.session_state:
+        st.session_state.selected_mode = "Single Item"
+    if 'multi_selected_items' not in st.session_state:
+        st.session_state.multi_selected_items = []
+    
+    # Add mode selection at the top
+    st.subheader("Translation Mode")
+    mode_options = ["Single Item", "The Need for Speed (Batch Translation)"]
+    selected_mode = st.radio("Select Mode", mode_options, key="mode_selection")
+    st.session_state.selected_mode = selected_mode
+    
+    # Display warning if "The Need for Speed" is selected but not for Blog collection
+    if st.session_state.selected_mode == "The Need for Speed (Batch Translation)" and st.session_state.selected_collection and "Blog" not in st.session_state.selected_collection:
+        st.warning("⚠️ 'The Need for Speed' mode is currently only available for Blog collections. Please select a Blog collection to use this feature.")
+    
     # Display CMS locales table
     st.subheader("CMS Locales")
-    with st.spinner("Fetching CMS locales..."):
-        cms_locales = get_cms_locales(st.session_state.site_id, st.session_state.api_key)
-        if cms_locales:
-            locale_data = {
-                "Language": [locale.get('name', 'Unnamed') for locale in cms_locales],
-                "CMS Locale ID": [locale.get('id', 'No ID') for locale in cms_locales],
-                "Language Code": [locale.get('code', 'No code') for locale in cms_locales],
-                "Default": [str(locale.get('default', False)) for locale in cms_locales]
-            }
-            st.table(locale_data)
+    
+    # Only fetch CMS locales if not already in session state
+    if st.session_state.cms_locales is None:
+        with st.spinner("Fetching CMS locales..."):
+            cms_locales = get_cms_locales(st.session_state.site_id, st.session_state.api_key)
+            if cms_locales:
+                st.session_state.cms_locales = cms_locales
+    
+    # Display locales from session state
+    if st.session_state.cms_locales:
+        locale_data = {
+            "Language": [locale.get('name', 'Unnamed') for locale in st.session_state.cms_locales],
+            "CMS Locale ID": [locale.get('id', 'No ID') for locale in st.session_state.cms_locales],
+            "Language Code": [locale.get('code', 'No code') for locale in st.session_state.cms_locales],
+            "Default": [str(locale.get('default', False)) for locale in st.session_state.cms_locales]
+        }
+        st.table(locale_data)
     
     # Replace Collection ID input with dropdown
     st.subheader("Collection Details")
-    with st.spinner("Fetching collections..."):
-        collections = get_collections(st.session_state.site_id, st.session_state.api_key)
-        if collections:
-            collection_options = [f"{col['displayName']} ({col['id']})" for col in collections]
-            selected_collection = st.selectbox(
-                "Select Collection",
-                options=collection_options,
-                help="Choose the collection you want to manage"
-            )
+    
+    # Only fetch collections if not already in session state
+    if st.session_state.collections is None:
+        with st.spinner("Fetching collections..."):
+            collections = get_collections(st.session_state.site_id, st.session_state.api_key)
+            if collections:
+                st.session_state.collections = collections
+    
+    # Display collections from session state
+    if st.session_state.collections:
+        collection_options = [f"{col['displayName']} ({col['id']})" for col in st.session_state.collections]
+        
+        # Use selectbox with key to maintain state
+        selected_collection = st.selectbox(
+            "Select Collection",
+            options=collection_options,
+            help="Choose the collection you want to manage",
+            key="collection_selectbox"
+        )
+        
+        # Only fetch items if collection changes
+        if selected_collection != st.session_state.selected_collection:
+            st.session_state.selected_collection = selected_collection
+            st.session_state.collection_items = None  # Clear cached items
+            st.session_state.parsed_items = None
+            st.session_state.selected_item = 'All'  # Reset selected item
+            st.session_state.multi_selected_items = []  # Reset multi-selected items
+        
+        if selected_collection:
+            # Get collection type and config
+            collection_name = selected_collection.split('(')[0].strip()
+            collection_type, config = get_collection_config(collection_name)
             
-            if selected_collection:
-                # Get collection type and config
-                collection_name = selected_collection.split('(')[0].strip()
-                collection_type, config = get_collection_config(collection_name)
-                
-                if not config:
-                    st.warning(f"Collection type '{collection_name}' is not configured for translation. Available types: {', '.join(COLLECTION_CONFIGS.keys())}")
-                    return
-                
-                st.write(f"Processing {config['display_name']} collection")
-                
-                # Extract collection ID and fetch items
-                collection_id = selected_collection.split('(')[-1].strip(')')
-                
-                # Add a loading message
+            if not config:
+                st.warning(f"Collection type '{collection_name}' is not configured for translation.\n\nAvailable types: {', '.join(COLLECTION_CONFIGS.keys())}")
+                return
+            
+            # Extract collection ID
+            collection_id = selected_collection.split('(')[-1].strip(')')
+            
+            # Only fetch items if not already in session state
+            if st.session_state.collection_items is None:
                 with st.status("Loading collection items...", expanded=True) as status:
-                    status.update(label="Fetching collection items... This may take a while for large collections.")
+                    items = get_all_collection_items(st.session_state.site_id, collection_id, st.session_state.api_key)
+                    if items:
+                        st.session_state.collection_items = items
+                        
+                        # Parse items based on collection type
+                        st.session_state.parsed_items = parse_collection_items(items, collection_type, config)
+                        status.update(label="Collection items loaded successfully!", state="complete", expanded=False)
+            
+            # Use items from session state
+            if st.session_state.parsed_items:
+                parsed_items = st.session_state.parsed_items
+                
+                # Add search functionality
+                search_term = st.text_input("Search items", key="search_items")
+                
+                # Filter items based on search term
+                filtered_items = parsed_items
+                if search_term:
+                    filtered_items = [item for item in parsed_items 
+                                     if search_term.lower() in item['identifier'].lower() or 
+                                        search_term.lower() in item['slug'].lower()]
+                    st.write(f"Found {len(filtered_items)} items matching '{search_term}'")
+                
+                # SINGLE ITEM MODE
+                if st.session_state.selected_mode == "Single Item":
+                    # Create a selectbox with filtered items
+                    item_options = ['All'] + [f"{item['identifier']} ({item['slug']})" for item in filtered_items]
                     
-                    # Use the improved pagination function
-                    items = get_all_collection_items(
-                        st.session_state.site_id,
-                        collection_id,
-                        st.session_state.api_key
+                    # Use selectbox with key to maintain state
+                    selected_item = st.selectbox(
+                        f"Select {config['display_name']} (Total: {len(filtered_items)} of {len(parsed_items)})",
+                        options=item_options,
+                        key="item_selectbox"
                     )
                     
-                    if items:
-                        # Parse items based on collection type
-                        parsed_items = parse_collection_items(items, collection_type, config)
-                        status.update(label=f"Loaded {len(parsed_items)} items", state="complete")
-                        
-                        # Display pagination info
-                        st.info(f"Successfully loaded {len(parsed_items)} items from the collection.")
-                        
-                        # Add a search filter for large collections
-                        search_term = st.text_input("Filter items by name:", placeholder="Type to filter...")
-                        
-                        # Filter items based on search term
-                        filtered_items = parsed_items
-                        if search_term:
-                            filtered_items = [item for item in parsed_items 
-                                             if search_term.lower() in item['identifier'].lower() or 
-                                                search_term.lower() in item['slug'].lower()]
-                            st.write(f"Found {len(filtered_items)} items matching '{search_term}'")
-                        
-                        # Create a selectbox with filtered items
-                        item_options = ['All'] + [f"{item['identifier']} ({item['slug']})" for item in filtered_items]
-                        selected_item = st.selectbox(
-                            f"Select {config['display_name']} (Total: {len(filtered_items)} of {len(parsed_items)})",
-                            options=item_options
+                    # Update selected item in session state
+                    st.session_state.selected_item = selected_item
+                    
+                    if selected_item != 'All':
+                        selected_slug = selected_item.split('(')[-1].strip(')')
+                        selected_data = next(
+                            (item for item in filtered_items if item['slug'] == selected_slug),
+                            None
                         )
                         
-                        if selected_item != 'All':
-                            selected_slug = selected_item.split('(')[-1].strip(')')
-                            selected_data = next(
-                                (item for item in filtered_items if item['slug'] == selected_slug),
-                                None
+                        if selected_data:
+                            st.subheader("Original Content")
+                            st.json(selected_data['data'])
+                            
+                            # Translation section
+                            st.subheader("Translation Management")
+                            
+                            # Add translation mode selection
+                            translation_mode = st.radio(
+                                "Translation Mode",
+                                ["Single Language", "All Languages"],
+                                help="Choose to translate to one language or all available languages"
                             )
                             
-                            if selected_data:
-                                st.subheader("Original Content")
-                                st.json(selected_data['data'])
-                                
-                                # Translation section
-                                st.subheader("Translation Management")
-                                
-                                # Add translation mode selection
-                                translation_mode = st.radio(
-                                    "Translation Mode",
-                                    ["Single Language", "All Languages"],
-                                    help="Choose to translate to one language or all available languages"
+                            if translation_mode == "Single Language":
+                                # Single language translation logic
+                                target_language = st.selectbox(
+                                    "Select target language",
+                                    options=[f"{locale['name']} ({locale['code']}) - {locale['id']}" 
+                                            for locale in st.session_state.cms_locales]
                                 )
                                 
-                                if translation_mode == "Single Language":
-                                    # Single language translation logic
-                                    target_language = st.selectbox(
-                                        "Select target language",
-                                        options=[f"{locale['name']} ({locale['code']}) - {locale['id']}" 
-                                                for locale in cms_locales]
-                                    )
+                                if target_language:
+                                    # Extract CMS Locale ID and language code
+                                    cms_locale_id = target_language.split(' - ')[-1]
+                                    language_code = target_language.split('(')[1].split(')')[0]
                                     
-                                    if target_language:
-                                        # Extract CMS Locale ID and language code
-                                        cms_locale_id = target_language.split(' - ')[-1]
-                                        language_code = target_language.split('(')[1].split(')')[0]
+                                    # Display form with translations
+                                    with st.form("translation_form"):
+                                        edited_fields = {}
                                         
-                                        # Display form with translations
-                                        with st.form("translation_form"):
-                                            edited_fields = {}
+                                        for key, value in selected_data['data'].items():
+                                            if key in config['fields_to_preserve']:
+                                                edited_fields[key] = value
+                                                continue
                                             
-                                            for key, value in selected_data['data'].items():
-                                                if key in config['fields_to_preserve']:
-                                                    edited_fields[key] = value
-                                                    continue
-                                                
-                                                if isinstance(value, str):
-                                                    if len(value) > 200:
-                                                        edited_fields[key] = st.text_area(
-                                                            key,
-                                                            value=value,
-                                                            height=300
-                                                        )
-                                                    else:
-                                                        edited_fields[key] = st.text_input(
-                                                            key,
-                                                            value=value
-                                                        )
-                                            
-                                            col1, col2 = st.columns(2)
-                                            with col1:
-                                                translate_button = st.form_submit_button("Translate")
-                                            with col2:
-                                                update_button = st.form_submit_button("Update Content")
-                                            
-                                            if translate_button:
-                                                with st.spinner("Translating content..."):
-                                                    for key, value in selected_data['data'].items():
-                                                        if isinstance(value, str) and key not in config['fields_to_preserve']:
-                                                            translated_text, error = translate_with_openai(
-                                                                value,
-                                                                language_code,
-                                                                st.session_state.openai_key
-                                                            )
-                                                            if error:
-                                                                st.error(f"Error translating {key}: {error}")
-                                                            else:
-                                                                edited_fields[key] = translated_text
-                                            
-                                            if update_button:
-                                                with st.spinner("Updating content..."):
-                                                    result = execute_curl_command(
-                                                        collection_id=collection_id,
-                                                        item_id=selected_data['id'],
-                                                        api_key=st.session_state.api_key,
-                                                        cms_locale_id=cms_locale_id,
-                                                        field_data=edited_fields
+                                            if isinstance(value, str):
+                                                if len(value) > 200:
+                                                    edited_fields[key] = st.text_area(
+                                                        key,
+                                                        value=value,
+                                                        height=300
                                                     )
-                                                    
-                                                    if result['error']:
-                                                        st.error(f"Error updating content: {result['error']}")
-                                                    else:
-                                                        st.success("✅ Content updated successfully!")
-                                
-                                else:  # All Languages mode
-                                    if st.button("Translate and Update All Languages"):
-                                        # Create a progress container
-                                        progress_container = st.empty()
-                                        status_container = st.empty()
-                                        results_container = st.container()
-                                        
-                                        # Initialize translation results
-                                        translation_results = []
-                                        
-                                        # Get non-default languages
-                                        languages_to_translate = [l for l in cms_locales if not l.get('default', False)]
-                                        total_languages = len(languages_to_translate)
-                                        
-                                        for idx, locale in enumerate(languages_to_translate):
-                                            # Update progress (ensure it's between 0 and 1)
-                                            progress = min(idx / total_languages, 1.0)
-                                            progress_container.progress(progress)
-                                            
-                                            # Update status message
-                                            status_container.info(f"Translating to {locale['name']} ({locale['code']})...")
-                                            
-                                            # Store translations for this language
-                                            current_translations = {}
-                                            
-                                            # Translate each field
-                                            for key, value in selected_data['data'].items():
-                                                if isinstance(value, str) and key not in config['fields_to_preserve']:
-                                                    translated_text, error = translate_with_openai(
-                                                        value,
-                                                        locale['code'],
-                                                        st.session_state.openai_key
-                                                    )
-                                                    if error:
-                                                        translation_results.append({
-                                                            'language': locale['name'],
-                                                            'status': 'error',
-                                                            'message': f"Error translating {key}: {error}"
-                                                        })
-                                                        translated_text = value
-                                                    current_translations[key] = translated_text
                                                 else:
-                                                    current_translations[key] = value
-                                            
-                                            # Execute update for this language
-                                            result = execute_curl_command(
-                                                collection_id=collection_id,
-                                                item_id=selected_data['id'],
-                                                api_key=st.session_state.api_key,
-                                                cms_locale_id=locale['id'],
-                                                field_data=current_translations
-                                            )
-                                            
-                                            # Store result
-                                            translation_results.append({
-                                                'language': locale['name'],
-                                                'status': 'success' if not result['error'] else 'error',
-                                                'message': result['error'] if result['error'] else 'Translation completed successfully'
-                                            })
-                                            
-                                            # Update results in real-time
-                                            with results_container:
-                                                st.write("Translation Results:")
-                                                for result in translation_results:
-                                                    if result['status'] == 'success':
-                                                        st.success(f"✅ {result['language']}: {result['message']}")
-                                                    else:
-                                                        st.error(f"❌ {result['language']}: {result['message']}")
+                                                    edited_fields[key] = st.text_input(
+                                                        key,
+                                                        value=value
+                                                    )
                                         
-                                        # Clear progress and status when complete
-                                        progress_container.empty()
-                                        status_container.success("All translations completed!")
+                                        col1, col2 = st.columns(2)
+                                        with col1:
+                                            translate_button = st.form_submit_button("Translate")
+                                        with col2:
+                                            update_button = st.form_submit_button("Update Content")
+                                        
+                                        if translate_button:
+                                            with st.spinner("Translating content..."):
+                                                for key, value in selected_data['data'].items():
+                                                    if isinstance(value, str) and key not in config['fields_to_preserve']:
+                                                        translated_text, error = translate_with_openai_concurrent(
+                                                            value,
+                                                            language_code,
+                                                            st.session_state.openai_key
+                                                        )
+                                                        if error:
+                                                            st.error(f"Error translating {key}: {error}")
+                                                        else:
+                                                            edited_fields[key] = translated_text
+                                        
+                                        if update_button:
+                                            with st.spinner("Updating content..."):
+                                                result = execute_curl_command_concurrent(
+                                                    collection_id=collection_id,
+                                                    item_id=selected_data['id'],
+                                                    api_key=st.session_state.api_key,
+                                                    cms_locale_id=cms_locale_id,
+                                                    field_data=edited_fields
+                                                )
+                                                
+                                                if result['error']:
+                                                    st.error(f"Error updating content: {result['error']}")
+                                                else:
+                                                    st.success("✅ Content updated successfully!")
+                            
+                            else:  # All Languages mode
+                                if st.button("Translate and Update All Languages"):
+                                    # Create a progress container
+                                    progress_container = st.empty()
+                                    status_container = st.empty()
+                                    results_container = st.container()
+                                    
+                                    # Initialize translation results
+                                    translation_results = []
+                                    
+                                    # Get non-default languages
+                                    languages_to_translate = [l for l in st.session_state.cms_locales if not l.get('default', False)]
+                                    total_languages = len(languages_to_translate)
+                                    
+                                    for idx, locale in enumerate(languages_to_translate):
+                                        # Update progress (ensure it's between 0 and 1)
+                                        progress = min(idx / total_languages, 1.0)
+                                        progress_container.progress(progress)
+                                        
+                                        # Update status message
+                                        status_container.info(f"Translating to {locale['name']} ({locale['code']})...")
+                                        
+                                        # Store translations for this language
+                                        current_translations = {}
+                                        
+                                        # Translate each field
+                                        for key, value in selected_data['data'].items():
+                                            if isinstance(value, str) and key not in config['fields_to_preserve']:
+                                                translated_text, error = translate_with_openai_concurrent(
+                                                    value,
+                                                    locale['code'],
+                                                    st.session_state.openai_key
+                                                )
+                                                if error:
+                                                    translation_results.append({
+                                                        'language': locale['name'],
+                                                        'status': 'error',
+                                                        'message': f"Error translating {key}: {error}"
+                                                    })
+                                                    translated_text = value
+                                                current_translations[key] = translated_text
+                                            else:
+                                                current_translations[key] = value
+                                        
+                                        # Execute update for this language
+                                        result = execute_curl_command_concurrent(
+                                            collection_id=collection_id,
+                                            item_id=selected_data['id'],
+                                            api_key=st.session_state.api_key,
+                                            cms_locale_id=locale['id'],
+                                            field_data=current_translations
+                                        )
+                                        
+                                        # Store result
+                                        translation_results.append({
+                                            'language': locale['name'],
+                                            'status': 'success' if not result['error'] else 'error',
+                                            'message': result['error'] if result['error'] else 'Translation completed successfully'
+                                        })
+                                        
+                                        # Update results in real-time
+                                        with results_container:
+                                            st.write("Translation Results:")
+                                            for result in translation_results:
+                                                if result['status'] == 'success':
+                                                    st.success(f"✅ {result['language']}: {result['message']}")
+                                                else:
+                                                    st.error(f"❌ {result['language']}: {result['message']}")
+                                    
+                                    # Clear progress and status when complete
+                                    progress_container.empty()
+                                    status_container.success("All translations completed!")
+                
+                # THE NEED FOR SPEED MODE (BATCH TRANSLATION)
+                else:
+                    st.subheader("The Need for Speed - Batch Translation")
+                    st.write("Select multiple items to translate to all languages at once.")
+                    
+                    # Add option for parallel or sequential processing
+                    translation_processing = st.radio(
+                        "Translation Processing Method",
+                        ["Parallel (Faster, translates all languages in parallel)", 
+                         "Sequential (Slower, translates one language at a time)"],
+                        index=0,
+                        key="translation_processing"
+                    )
+                    
+                    # Add max workers option for parallel processing
+                    if translation_processing == "Parallel (Faster, translates all languages in parallel)":
+                        max_workers = st.slider(
+                            "Maximum parallel translations",
+                            min_value=2,
+                            max_value=10,
+                            value=5,
+                            help="Higher values may be faster but could hit API rate limits"
+                        )
+                    
+                    # Create a multiselect with filtered items
+                    item_options = [f"{item['identifier']} ({item['slug']})" for item in filtered_items]
+                    
+                    # Use multiselect to allow multiple item selection
+                    multi_selected_items = st.multiselect(
+                        f"Select {config['display_name']} items to translate (Total: {len(filtered_items)} of {len(parsed_items)})",
+                        options=item_options,
+                        key="multi_item_selectbox"
+                    )
+                    
+                    # Update selected items in session state
+                    st.session_state.multi_selected_items = multi_selected_items
+                    
+                    if multi_selected_items:
+                        st.write(f"Selected {len(multi_selected_items)} items for batch translation.")
+                        
+                        # Get non-default languages
+                        languages_to_translate = [l for l in st.session_state.cms_locales if not l.get('default', False)]
+                        
+                        # Display language information
+                        st.write(f"Will translate to {len(languages_to_translate)} languages:")
+                        for locale in languages_to_translate:
+                            st.write(f"- {locale['name']} ({locale['code']})")
+                        
+                        # Display fields that will be translated
+                        st.write("Fields that will be translated:")
+                        for field in config['fields_to_translate']:
+                            st.write(f"- {field}")
+                        
+                        # Start batch translation button
+                        if st.button("Start Batch Translation", key="start_batch_translation"):
+                            # Verify that the OpenAI API key is available
+                            if not st.session_state.get('openai_key'):
+                                st.error("OpenAI API Key is missing. Please add it in the sidebar to enable translations.")
+                                return
+                            
+                            # Debug information
+                            st.write("Debug Information:")
+                            st.write(f"OpenAI API Key available: {bool(st.session_state.get('openai_key'))}")
+                            st.write(f"Webflow API Key available: {bool(st.session_state.get('api_key'))}")
+                            
+                            # Create containers for progress tracking
+                            main_progress_container = st.empty()
+                            main_status_container = st.empty()
+                            item_progress_container = st.empty()
+                            item_status_container = st.empty()
+                            language_status_container = st.empty()
+                            timer_container = st.empty()
+                            results_container = st.container()
+                            
+                            # Initialize results and timer
+                            all_results = []
+                            start_time = time.time()
+                            
+                            # Function to format elapsed time
+                            def format_elapsed_time(seconds):
+                                return str(datetime.timedelta(seconds=int(seconds)))
+                            
+                            # Get selected item data
+                            selected_items_data = []
+                            for selected_item in multi_selected_items:
+                                selected_slug = selected_item.split('(')[-1].strip(')')
+                                item_data = next(
+                                    (item for item in filtered_items if item['slug'] == selected_slug),
+                                    None
+                                )
+                                if item_data:
+                                    selected_items_data.append(item_data)
+                            
+                            # Update main progress
+                            total_items = len(selected_items_data)
+                            
+                            # PARALLEL PROCESSING
+                            if translation_processing == "Parallel (Faster, translates all languages in parallel)":
+                                # Process each item
+                                for item_idx, item_data in enumerate(selected_items_data):
+                                    # Update elapsed time
+                                    elapsed = time.time() - start_time
+                                    timer_container.info(f"⏱️ Elapsed time: {format_elapsed_time(elapsed)}")
+                                    
+                                    # Update main progress
+                                    main_progress = min((item_idx) / total_items, 1.0)
+                                    main_progress_container.progress(main_progress)
+                                    main_status_container.info(f"Processing item {item_idx + 1} of {total_items}: {item_data['identifier']}")
+                                    
+                                    # Reset item progress
+                                    item_progress_container.progress(0)
+                                    item_status_container.info(f"Starting translation for: {item_data['identifier']}")
+                                    
+                                    # Item start time
+                                    item_start_time = time.time()
+                                    
+                                    # Process all languages for this item in parallel using ThreadPoolExecutor
+                                    language_status_container.info(f"Translating to {len(languages_to_translate)} languages in parallel...")
+                                    
+                                    # Create tasks for parallel execution
+                                    tasks = []
+                                    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                                        # Submit tasks to the executor
+                                        futures = []
+                                        for locale in languages_to_translate:
+                                            future = executor.submit(
+                                                process_language_translation_concurrent,
+                                                item_data=item_data,
+                                                locale=locale,
+                                                openai_key=st.session_state.openai_key,
+                                                webflow_key=st.session_state.api_key,
+                                                collection_id=collection_id,
+                                                config=config
+                                            )
+                                            futures.append(future)
+                                        
+                                        # Process results as they complete
+                                        item_results = []
+                                        for i, future in enumerate(concurrent.futures.as_completed(futures)):
+                                            result = future.result()
+                                            item_results.append(result)
+                                            
+                                            # Update progress
+                                            progress = (i + 1) / len(futures)
+                                            item_progress_container.progress(progress)
+                                            
+                                            # Update status in real-time
+                                            if result['status'] == 'success':
+                                                language_status_container.info(f"Completed {i+1}/{len(futures)}: {result['language']} ✅")
+                                            else:
+                                                language_status_container.warning(f"Completed {i+1}/{len(futures)}: {result['language']} ❌ - {result['message']}")
+                                        
+                                        # Add item results to all results
+                                        all_results.extend(item_results)
+                                        
+                                        # Calculate item processing time
+                                        item_elapsed = time.time() - item_start_time
+                                        
+                                        # Update results in real-time
+                                        with results_container:
+                                            st.write(f"Results for {item_data['identifier']}:")
+                                            for res in item_results:
+                                                if res['status'] == 'success':
+                                                    st.success(f"✅ {res['language']}: {res['message']}")
+                                                else:
+                                                    st.error(f"❌ {res['language']}: {res['message']}")
+                                        
+                                        # Update item status
+                                        item_status_container.success(f"Completed translations for: {item_data['identifier']} in {format_elapsed_time(item_elapsed)}")
+                            
+                            # SEQUENTIAL PROCESSING (ORIGINAL METHOD)
+                            else:
+                                # Process each item
+                                for item_idx, item_data in enumerate(selected_items_data):
+                                    # Update elapsed time
+                                    elapsed = time.time() - start_time
+                                    timer_container.info(f"⏱️ Elapsed time: {format_elapsed_time(elapsed)}")
+                                    
+                                    # Update main progress
+                                    main_progress = min((item_idx) / total_items, 1.0)
+                                    main_progress_container.progress(main_progress)
+                                    main_status_container.info(f"Processing item {item_idx + 1} of {total_items}: {item_data['identifier']}")
+                                    
+                                    # Reset item progress
+                                    item_progress_container.progress(0)
+                                    item_status_container.info(f"Starting translation for: {item_data['identifier']}")
+                                    
+                                    # Item start time
+                                    item_start_time = time.time()
+                                    
+                                    # Process each language for this item
+                                    item_results = []
+                                    for lang_idx, locale in enumerate(languages_to_translate):
+                                        # Update elapsed time
+                                        elapsed = time.time() - start_time
+                                        timer_container.info(f"⏱️ Elapsed time: {format_elapsed_time(elapsed)}")
+                                        
+                                        # Update language progress
+                                        language_status_container.info(f"Translating to {locale['name']} ({locale['code']})...")
+                                        
+                                        # Process this language
+                                        result = process_language_translation_concurrent(
+                                            item_data=item_data,
+                                            locale=locale,
+                                            openai_key=st.session_state.openai_key,
+                                            webflow_key=st.session_state.api_key,
+                                            collection_id=collection_id,
+                                            config=config
+                                        )
+                                        
+                                        # Add to results
+                                        item_results.append(result)
+                                        
+                                        # Update item progress
+                                        item_progress = min((lang_idx + 1) / len(languages_to_translate), 1.0)
+                                        item_progress_container.progress(item_progress)
+                                    
+                                    # Add item results to all results
+                                    all_results.extend(item_results)
+                                    
+                                    # Calculate item processing time
+                                    item_elapsed = time.time() - item_start_time
+                                    
+                                    # Update results in real-time
+                                    with results_container:
+                                        st.write(f"Results for {item_data['identifier']}:")
+                                        for res in item_results:
+                                            if res['status'] == 'success':
+                                                st.success(f"✅ {res['language']}: {res['message']}")
+                                            else:
+                                                st.error(f"❌ {res['language']}: {res['message']}")
+                                    
+                                    # Update item status
+                                    item_status_container.success(f"Completed translations for: {item_data['identifier']} in {format_elapsed_time(item_elapsed)}")
+                                
+                            # Calculate total elapsed time
+                            total_elapsed = time.time() - start_time
+                            
+                            # Update main progress when complete
+                            main_progress_container.progress(1.0)
+                            main_status_container.success(f"Completed batch translation for all {total_items} items in {format_elapsed_time(total_elapsed)}!")
+                            
+                            # Display summary
+                            st.subheader("Batch Translation Summary")
+                            success_count = sum(1 for res in all_results if res['status'] == 'success')
+                            error_count = sum(1 for res in all_results if res['status'] == 'error')
+                            st.write(f"Processing method: {translation_processing}")
+                            st.write(f"Total translations: {len(all_results)}")
+                            st.write(f"Successful translations: {success_count}")
+                            st.write(f"Failed translations: {error_count}")
+                            st.write(f"Total time: {format_elapsed_time(total_elapsed)}")
+                            st.write(f"Average time per item: {format_elapsed_time(total_elapsed/max(total_items, 1))}")
+                            st.write(f"Average time per translation: {format_elapsed_time(total_elapsed/max(len(all_results), 1))}")
+                            
+                            # Clear progress indicators
+                            language_status_container.empty()
+                            item_progress_container.empty()
+                            item_status_container.empty()
 
 if __name__ == "__main__":
     main() 
