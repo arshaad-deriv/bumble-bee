@@ -317,6 +317,8 @@ def translate_with_openai_concurrent(text, target_language, api_key):
         
         system_message = f"""You are a professional translator with 20 years of experience.
         Translate the text to {target_language}.
+
+        If the {target_language} is "sw", then in that case translate to Swahili.
         
         DO NOT TRANSLATE the following terms - keep them exactly as they appear:
         {terms_list}
