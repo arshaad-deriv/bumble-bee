@@ -294,6 +294,7 @@ def translate_content_with_openai(parsed_nodes, target_language, api_key):
         # Prepare the system message explaining what we want
         system_message = f"""You are a professional translator with 20 years of experience.  
         Translate only the "text" values in the JSON to {target_language}. 
+        If the {target_language} is "sw", then in that case translate to Swahili only.
         
         DO NOT TRANSLATE the following terms - keep them exactly as they appear:
         {terms_list}
