@@ -318,7 +318,7 @@ def translate_with_openai_concurrent(text, target_language, api_key):
         system_message = f"""You are a professional translator with 20 years of experience.
         Translate the text to {target_language}.
 
-        If the {target_language} is "sw", then in that case translate to Swahili.
+        If the {target_language} is "sw", then in that case translate to Swahili only.
         
         DO NOT TRANSLATE the following terms - keep them exactly as they appear:
         {terms_list}
@@ -710,27 +710,63 @@ def main():
                                     cms_locale_id = target_language.split(' - ')[-1]
                                     language_code = target_language.split('(')[1].split(')')[0]
                                     
-                                    # Display form with translations
+                                    # Initialize a dictionary to store translations
+                                    if 'current_translations' not in st.session_state:
+                                        st.session_state.current_translations = {}
+                                    
+                                    # Display form with translations in a two-column layout
                                     with st.form("translation_form"):
                                         edited_fields = {}
                                         
+                                        # Add a header for the columns
+                                        col_orig, col_trans = st.columns(2)
+                                        with col_orig:
+                                            st.markdown("### Original Content")
+                                        with col_trans:
+                                            st.markdown("### Translated Content")
+                                        
+                                        # Process each field
                                         for key, value in selected_data['data'].items():
                                             if key in config['fields_to_preserve']:
                                                 edited_fields[key] = value
                                                 continue
                                             
                                             if isinstance(value, str):
-                                                if len(value) > 200:
-                                                    edited_fields[key] = st.text_area(
-                                                        key,
-                                                        value=value,
-                                                        height=300
-                                                    )
-                                                else:
-                                                    edited_fields[key] = st.text_input(
-                                                        key,
-                                                        value=value
-                                                    )
+                                                # Create two columns for each field
+                                                col_orig, col_trans = st.columns(2)
+                                                
+                                                # Show original text in left column
+                                                with col_orig:
+                                                    if len(value) > 200:
+                                                        st.text_area(
+                                                            f"Original {key}",
+                                                            value=value,
+                                                            height=300,
+                                                            disabled=True
+                                                        )
+                                                    else:
+                                                        st.text_input(
+                                                            f"Original {key}",
+                                                            value=value,
+                                                            disabled=True
+                                                        )
+                                                
+                                                # Show editable translated text in right column
+                                                with col_trans:
+                                                    # Use the stored translation if available
+                                                    translation_value = st.session_state.current_translations.get(key, value)
+                                                    
+                                                    if len(value) > 200:
+                                                        edited_fields[key] = st.text_area(
+                                                            key,
+                                                            value=translation_value,
+                                                            height=300
+                                                        )
+                                                    else:
+                                                        edited_fields[key] = st.text_input(
+                                                            key,
+                                                            value=translation_value
+                                                        )
                                         
                                         col1, col2 = st.columns(2)
                                         with col1:
@@ -740,6 +776,9 @@ def main():
                                         
                                         if translate_button:
                                             with st.spinner("Translating content..."):
+                                                # Clear previous translations
+                                                st.session_state.current_translations = {}
+                                                
                                                 for key, value in selected_data['data'].items():
                                                     if isinstance(value, str) and key not in config['fields_to_preserve']:
                                                         translated_text, error = translate_with_openai_concurrent(
@@ -750,7 +789,12 @@ def main():
                                                         if error:
                                                             st.error(f"Error translating {key}: {error}")
                                                         else:
+                                                            # Store the translation in session state
+                                                            st.session_state.current_translations[key] = translated_text
                                                             edited_fields[key] = translated_text
+                                                
+                                                # Force a rerun to show the translations
+                                                st.rerun()
                                         
                                         if update_button:
                                             with st.spinner("Updating content..."):
@@ -1098,6 +1142,15 @@ def main():
                             language_status_container.empty()
                             item_progress_container.empty()
                             item_status_container.empty()
+
+    # Add footer at the bottom of the app
+    st.markdown("---")
+    st.markdown(
+        "<div style='text-align: center; color: gray; padding: 10px;'>"
+        "If you find this tool helpful, please buy me coffee and some shawarmas! ☕🌯"
+        "</div>", 
+        unsafe_allow_html=True
+    )
 
 if __name__ == "__main__":
     main() 
