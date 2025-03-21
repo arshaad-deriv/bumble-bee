@@ -93,6 +93,34 @@ COLLECTION_CONFIGS = {
         "display_name": "Help Center Category",
         "item_identifier": "name"
     },
+    "Help Centre Categories": {
+        "fields_to_translate": [
+            'name',
+            'page-title',
+            'meta-description'
+        ],
+        "fields_to_preserve": [
+            'slug',
+            'type',
+            'order-number',
+            'main-questions',
+        ],
+        "display_name": "Help Centre Category",
+        "item_identifier": "name"
+    },
+    "Help Centre Questions": {
+        "fields_to_translate": [
+            'name',                    # Question title
+            'answer',                 # Answer content
+        ],
+        "fields_to_preserve": [
+            'slug',                   # URL slug
+            'category',            # Category identifier
+            'order-number'
+        ],
+        "display_name": "Help Centre Question",
+        "item_identifier": "name"  # Use question field as identifier
+    },
     "Help Center Questions": {
         "fields_to_translate": [
             'name',                    # Question title
@@ -104,7 +132,7 @@ COLLECTION_CONFIGS = {
             'order-number'
         ],
         "display_name": "Help Center Question",
-        "item_identifier": "question"  # Use question field as identifier
+        "item_identifier": "name"  # Use question field as identifier
     },
     "EU Blogs": {
         "fields_to_translate": [
@@ -326,6 +354,7 @@ def translate_with_openai_concurrent(text, target_language, api_key):
         Follow these additional rules when translating:
         - When encountering the word "Deriv" and any succeeding word, keep it in English. For example, "Deriv Blog," "Deriv Life," "Deriv Bot," and "Deriv App" should be kept in English.
         - Keep product names such as P2P, MT5, Deriv X, Deriv cTrader, SmartTrader, Deriv Trader, Deriv GO, Deriv Bot, and Binary Bot in English.
+        - When encountering the symbol "?", mirror it in the translated text when the target language is Arabic.
         
         Return only the translation, no explanations."""
         
@@ -544,6 +573,31 @@ def main():
     if not st.session_state.get('openai_key'):
         st.warning("Please add your OpenAI API key in the sidebar to enable translations")
         return
+    
+    # Track API credential changes
+    if 'previous_api_key' not in st.session_state:
+        st.session_state.previous_api_key = st.session_state.api_key
+    if 'previous_site_id' not in st.session_state:
+        st.session_state.previous_site_id = st.session_state.site_id
+    
+    # Reset cached data if credentials have changed
+    if (st.session_state.previous_api_key != st.session_state.api_key or 
+        st.session_state.previous_site_id != st.session_state.site_id):
+        # Reset all cached data
+        st.session_state.cms_locales = None
+        st.session_state.collections = None
+        st.session_state.selected_collection = None
+        st.session_state.collection_items = None
+        st.session_state.parsed_items = None
+        st.session_state.selected_item = 'All'
+        st.session_state.multi_selected_items = []
+        
+        # Update the stored credentials
+        st.session_state.previous_api_key = st.session_state.api_key
+        st.session_state.previous_site_id = st.session_state.site_id
+        
+        # Inform the user
+        st.success("API credentials updated. Data will be refreshed.")
     
     # Initialize session state variables if they don't exist
     if 'cms_locales' not in st.session_state:
@@ -1045,11 +1099,12 @@ def main():
                                         # Update results in real-time
                                         with results_container:
                                             st.write(f"Results for {item_data['identifier']}:")
-                                            for res in item_results:
-                                                if res['status'] == 'success':
-                                                    st.success(f"✅ {res['language']}: {res['message']}")
-                                                else:
-                                                    st.error(f"❌ {res['language']}: {res['message']}")
+                                            with st.expander(f"View translation results for {item_data['identifier']}", expanded=False):
+                                                for res in item_results:
+                                                    if res['status'] == 'success':
+                                                        st.success(f"✅ {res['language']}: {res['message']}")
+                                                    else:
+                                                        st.error(f"❌ {res['language']}: {res['message']}")
                                         
                                         # Update item status
                                         item_status_container.success(f"Completed translations for: {item_data['identifier']} in {format_elapsed_time(item_elapsed)}")
@@ -1110,11 +1165,12 @@ def main():
                                     # Update results in real-time
                                     with results_container:
                                         st.write(f"Results for {item_data['identifier']}:")
-                                        for res in item_results:
-                                            if res['status'] == 'success':
-                                                st.success(f"✅ {res['language']}: {res['message']}")
-                                            else:
-                                                st.error(f"❌ {res['language']}: {res['message']}")
+                                        with st.expander(f"View translation results for {item_data['identifier']}", expanded=False):
+                                            for res in item_results:
+                                                if res['status'] == 'success':
+                                                    st.success(f"✅ {res['language']}: {res['message']}")
+                                                else:
+                                                    st.error(f"❌ {res['language']}: {res['message']}")
                                     
                                     # Update item status
                                     item_status_container.success(f"Completed translations for: {item_data['identifier']} in {format_elapsed_time(item_elapsed)}")
@@ -1130,13 +1186,20 @@ def main():
                             st.subheader("Batch Translation Summary")
                             success_count = sum(1 for res in all_results if res['status'] == 'success')
                             error_count = sum(1 for res in all_results if res['status'] == 'error')
-                            st.write(f"Processing method: {translation_processing}")
-                            st.write(f"Total translations: {len(all_results)}")
-                            st.write(f"Successful translations: {success_count}")
-                            st.write(f"Failed translations: {error_count}")
+                            
+                            # Show basic stats outside expander
+                            st.write(f"Total translations: {len(all_results)} ({success_count} successful, {error_count} failed)")
                             st.write(f"Total time: {format_elapsed_time(total_elapsed)}")
-                            st.write(f"Average time per item: {format_elapsed_time(total_elapsed/max(total_items, 1))}")
-                            st.write(f"Average time per translation: {format_elapsed_time(total_elapsed/max(len(all_results), 1))}")
+                            
+                            # Show detailed stats in expander
+                            with st.expander("View detailed translation statistics", expanded=False):
+                                st.write(f"Processing method: {translation_processing}")
+                                st.write(f"Total translations: {len(all_results)}")
+                                st.write(f"Successful translations: {success_count}")
+                                st.write(f"Failed translations: {error_count}")
+                                st.write(f"Total time: {format_elapsed_time(total_elapsed)}")
+                                st.write(f"Average time per item: {format_elapsed_time(total_elapsed/max(total_items, 1))}")
+                                st.write(f"Average time per translation: {format_elapsed_time(total_elapsed/max(len(all_results), 1))}")
                             
                             # Clear progress indicators
                             language_status_container.empty()
