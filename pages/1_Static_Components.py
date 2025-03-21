@@ -7,6 +7,7 @@ import tempfile
 import os
 import zipfile
 from streamlit_option_menu import option_menu
+from utils import get_site_locales
 
 # Hide the default menu
 st.set_page_config(
@@ -78,16 +79,48 @@ if 'excluded_components' not in st.session_state:
 with st.sidebar:
 
     
-    # OpenAI Configuration
+    # OpenAI Configuration with header and expander
     st.subheader("OpenAI Configuration")
-    openai_key = st.text_input(
-        "OpenAI API Key",
-        type="password",
-        value=st.session_state.openai_key,
-        help="Your OpenAI API key for translations"
-    )
-    if openai_key:
-        st.session_state.openai_key = openai_key
+    with st.expander("Configure API Key", expanded=False):
+        openai_key = st.text_input(
+            "OpenAI API Key",
+            type="password",
+            value=st.session_state.openai_key,
+            help="Your OpenAI API key for translations"
+        )
+        if openai_key:
+            st.session_state.openai_key = openai_key
+    
+    # Add divider between configurations
+    st.divider()
+    
+    # Webflow Configuration with header and expander
+    st.subheader("Webflow Configuration")
+    with st.expander("Configure API Settings", expanded=False):
+        site_id = st.text_input(
+            "Site ID", 
+            value=st.session_state.site_id,
+            help="The unique identifier for your Webflow site"
+        )
+        api_key = st.text_input(
+            "API Key", 
+            type="password", 
+            value=st.session_state.api_key,
+            help="Your Webflow API token"
+        )
+    
+    # Update session state with new values
+    if site_id:
+        # Check if site ID has changed
+        if st.session_state.site_id != site_id:
+            # Reset cached data related to site
+            st.session_state.components = []
+            st.session_state.current_component_content = None
+            st.session_state.parsed_nodes = None
+        st.session_state.site_id = site_id
+        
+    if api_key:
+        st.session_state.api_key = api_key
 
 def get_site_components(site_id, api_key):
     """Get list of components from the site with pagination handling"""
@@ -216,40 +249,6 @@ def parse_component_content(content):
             parsed_nodes.append(node_data)
     
     return {"nodes": parsed_nodes}
-
-def get_site_locales(site_id, api_key):
-    """Get list of locales with their IDs"""
-    url = f"https://api.webflow.com/v2/sites/{site_id}"
-    headers = {
-        "accept": "application/json",
-        "authorization": f"Bearer {api_key}"
-    }
-    
-    print(f"\n[DEBUG] Fetching site locales from URL: {url}")
-    try:
-        response = requests.get(url, headers=headers)
-        response.raise_for_status()
-        data = response.json()
-        
-        locales = []
-        # Add primary locale
-        primary = data.get('locales', {}).get('primary', {})
-        if primary:
-            primary['type'] = 'Primary'
-            locales.append(primary)
-        
-        # Add secondary locales
-        secondary = data.get('locales', {}).get('secondary', [])
-        for locale in secondary:
-            locale['type'] = 'Secondary'
-            locales.append(locale)
-            
-        print(f"[DEBUG] Successfully fetched {len(locales)} locales")
-        return locales
-    except Exception as e:
-        print(f"[DEBUG] Error fetching locales: {str(e)}")
-        st.error(f"Error fetching site locales: {str(e)}")
-        return []
 
 def translate_content_with_openai(parsed_nodes, target_language, api_key):
     """Translate content using OpenAI while preserving JSON structure"""
@@ -381,30 +380,33 @@ def update_component_content(site_id, component_id, locale_id, nodes, api_key):
 def main():
     st.title("Static Components Manager")
     
-    # 1. Credentials Form
-    with st.form("credentials_form"):
-        site_id = st.text_input(
-            "Site ID", 
-            value=st.session_state.site_id,
-            help="The unique identifier for your Webflow site"
-        )
-        api_key = st.text_input(
-            "API Key", 
-            type="password", 
-            value=st.session_state.api_key,
-            help="Your Webflow API token"
-        )
-        submit_button = st.form_submit_button("Save Credentials")
-    
-    if submit_button:
-        st.session_state.site_id = site_id
-        st.session_state.api_key = api_key
-        st.success("Credentials saved!")
-    
-    # Check if credentials are set
+    # Check if credentials are set in session state
     if not st.session_state.api_key or not st.session_state.site_id:
-        st.warning("Please set your Webflow API key and Site ID above")
+        st.warning("Please enter your Webflow API Key and Site ID in the sidebar to continue.")
         st.stop()
+    
+    # Track API credential changes
+    if 'previous_api_key' not in st.session_state:
+        st.session_state.previous_api_key = st.session_state.api_key
+    if 'previous_site_id' not in st.session_state:
+        st.session_state.previous_site_id = st.session_state.site_id
+    
+    # Reset cached data if credentials have changed
+    if (st.session_state.previous_api_key != st.session_state.api_key or 
+        st.session_state.previous_site_id != st.session_state.site_id):
+        # Reset all cached data
+        st.session_state.components = []
+        st.session_state.current_component_content = None
+        st.session_state.parsed_nodes = None
+        st.session_state.selected_component = None
+        st.session_state.locales = None
+        
+        # Update the stored credentials
+        st.session_state.previous_api_key = st.session_state.api_key
+        st.session_state.previous_site_id = st.session_state.site_id
+        
+        # Inform the user
+        st.success("API credentials updated. Data will be refreshed.")
     
     # 2. Fetch and Display Locales
     if 'locales' not in st.session_state:
@@ -459,8 +461,7 @@ def main():
         # Create a table of filtered components
         component_data = {
             "Name": [comp.get('name', 'Unnamed') for comp in filtered_components],
-            "Component ID": [comp['id'] for comp in filtered_components],
-            "Type": [comp.get('type', 'Unknown') for comp in filtered_components]
+            "Component ID": [comp['id'] for comp in filtered_components]
         }
         st.write("Showing components in table (limited to 100 rows):")
         st.table(component_data)
@@ -569,8 +570,11 @@ def main():
                                 # Get the locale ID for the API call
                                 locale_id = locale_options[current_language]['id']
                                 
+                                # Create a minimal status indicator
+                                st.success(f"Translating to {current_language}...")
+                                
                                 # Create an expander for translation details
-                                with st.expander(f"Translation Details - {current_language}", expanded=True):
+                                with st.expander(f"Translation Details - {current_language}", expanded=False):
                                     st.subheader("Translated Content")
                                     st.json(translated_content)
                                     

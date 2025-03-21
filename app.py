@@ -6,6 +6,7 @@ import time
 import tempfile
 import os
 import zipfile
+from utils import get_site_locales
 
 # Hide the default menu
 st.set_page_config(
@@ -13,35 +14,29 @@ st.set_page_config(
     layout="wide"
 )
 
-# Initialize session state
-if 'site_id' not in st.session_state:
-    st.session_state.site_id = ''
-if 'api_key' not in st.session_state:
-    st.session_state.api_key = ''
-if 'openai_key' not in st.session_state:
-    st.session_state.openai_key = ''
-if 'pages' not in st.session_state:
-    st.session_state.pages = []
-if 'locales' not in st.session_state:
-    st.session_state.locales = []
-if 'current_content' not in st.session_state:
-    st.session_state.current_content = None
-if 'parsed_nodes' not in st.session_state:
-    st.session_state.parsed_nodes = None
-
-# Add sidebar configuration
-with st.sidebar:
+def validate_api_token(api_key):
+    """Validate API token by making a test request"""
+    url = "https://api.webflow.com/v2/sites"
+    headers = {
+        "accept": "application/json",
+        "authorization": f"Bearer {api_key}"
+    }
     
-    # OpenAI Configuration
-    st.subheader("OpenAI Configuration")
-    openai_key = st.text_input(
-        "OpenAI API Key",
-        type="password",
-        value=st.session_state.openai_key,
-        help="Your OpenAI API key for translations"
-    )
-    if openai_key:
-        st.session_state.openai_key = openai_key
+    try:
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()
+        return True
+    except requests.exceptions.HTTPError as e:
+        if e.response.status_code == 401:
+            st.error("Invalid API token. Please check your token and ensure it has the required permissions (pages:read)")
+        elif e.response.status_code == 403:
+            st.error("API token doesn't have the required permissions. Please ensure it has 'pages:read' scope")
+        else:
+            st.error(f"API Error: {str(e)}")
+        return False
+    except Exception as e:
+        st.error(f"Connection Error: {str(e)}")
+        return False
 
 def get_pages(site_id, api_key):
     """Get list of pages with their IDs"""
@@ -63,37 +58,94 @@ def get_pages(site_id, api_key):
         st.error(f"Error fetching pages: {str(e)}")
         return []
 
-def get_site_locales(site_id, api_key):
-    """Get list of locales with their IDs"""
-    url = f"https://api.webflow.com/v2/sites/{site_id}"
-    headers = {
-        "accept": "application/json",
-        "authorization": f"Bearer {api_key}"
-    }
+# Initialize session state
+if 'site_id' not in st.session_state:
+    st.session_state.site_id = ''
+if 'api_key' not in st.session_state:
+    st.session_state.api_key = ''
+if 'openai_key' not in st.session_state:
+    st.session_state.openai_key = ''
+if 'pages' not in st.session_state:
+    st.session_state.pages = []
+if 'locales' not in st.session_state:
+    st.session_state.locales = []
+if 'current_content' not in st.session_state:
+    st.session_state.current_content = None
+if 'parsed_nodes' not in st.session_state:
+    st.session_state.parsed_nodes = None
+
+# Add sidebar configuration
+with st.sidebar:
     
-    try:
-        response = requests.get(url, headers=headers)
-        response.raise_for_status()
-        data = response.json()
+    # OpenAI Configuration with header and expander
+    st.subheader("OpenAI Configuration")
+    with st.expander("Configure API Key", expanded=False):
+        openai_key = st.text_input(
+            "OpenAI API Key",
+            type="password",
+            value=st.session_state.openai_key,
+            help="Your OpenAI API key for translations"
+        )
+        if openai_key:
+            st.session_state.openai_key = openai_key
+    
+    # Add divider between configurations
+    st.divider()
+    
+    # Webflow Configuration with header and expander
+    st.subheader("Webflow Configuration")
+    with st.expander("Configure API Settings", expanded=False):
+        site_id = st.text_input(
+            "Site ID", 
+            value=st.session_state.site_id,
+            help="The unique identifier for your Webflow site"
+        )
+        api_key = st.text_input(
+            "API Key", 
+            type="password", 
+            value=st.session_state.api_key,
+            help="Your Webflow API token"
+        )
+    
+    # Update session state with new values
+    if site_id:
+        # Check if site ID has changed
+        if st.session_state.site_id != site_id:
+            # Reset cached data related to site
+            st.session_state.pages = []
+            st.session_state.locales = []
+            st.session_state.current_content = None
+            st.session_state.parsed_nodes = None
+        st.session_state.site_id = site_id
         
-        locales = []
-        # Add primary locale
-        primary = data.get('locales', {}).get('primary', {})
-        if primary:
-            primary['type'] = 'Primary'
-            locales.append(primary)
-        
-        # Add secondary locales
-        secondary = data.get('locales', {}).get('secondary', [])
-        for locale in secondary:
-            locale['type'] = 'Secondary'
-            locales.append(locale)
+    if api_key:
+        # Check if API key has changed
+        if st.session_state.api_key != api_key:
+            # Reset cached data related to API
+            st.session_state.pages = []
+            st.session_state.locales = []
+            st.session_state.current_content = None
+            st.session_state.parsed_nodes = None
+        st.session_state.api_key = api_key
+    
+    # Add validate button to sidebar
+    if st.button("Validate & Fetch Site Data", key="sidebar_validate_button"):
+        # First validate the API token
+        if validate_api_token(st.session_state.api_key):
+            st.success("API token validated successfully!")
             
-        return locales
-    except Exception as e:
-        print(f"\nERROR: {str(e)}")
-        st.error(f"Error fetching site locales: {str(e)}")
-        return []
+            # Get Pages and Locales
+            with st.spinner("Fetching site data..."):
+                # Get and display locales for session state
+                locales = get_site_locales(st.session_state.site_id, st.session_state.api_key)
+                if locales:
+                    st.session_state.locales = locales
+                
+                # Fetch pages for session state
+                pages = get_pages(st.session_state.site_id, st.session_state.api_key)
+                if pages:
+                    st.session_state.pages = pages
+                    st.success(f"Successfully fetched {len(pages)} pages and {len(locales)} locales!")
 
 def get_page_content(page_id, api_key):
     """Get page content using DOM endpoint with pagination handling"""
@@ -141,30 +193,6 @@ def get_page_content(page_id, api_key):
         "lastUpdated": data.get("lastUpdated")
     }
 
-def validate_api_token(api_key):
-    """Validate API token by making a test request"""
-    url = "https://api.webflow.com/v2/sites"
-    headers = {
-        "accept": "application/json",
-        "authorization": f"Bearer {api_key}"
-    }
-    
-    try:
-        response = requests.get(url, headers=headers)
-        response.raise_for_status()
-        return True
-    except requests.exceptions.HTTPError as e:
-        if e.response.status_code == 401:
-            st.error("Invalid API token. Please check your token and ensure it has the required permissions (pages:read)")
-        elif e.response.status_code == 403:
-            st.error("API token doesn't have the required permissions. Please ensure it has 'pages:read' scope")
-        else:
-            st.error(f"API Error: {str(e)}")
-        return False
-    except Exception as e:
-        st.error(f"Connection Error: {str(e)}")
-        return False
-
 def parse_page_content(content):
     """Parse page content and extract nodes with property overrides and text nodes"""
     parsed_nodes = []
@@ -185,9 +213,20 @@ def parse_page_content(content):
         if node.get('propertyOverrides'):
             for override in node['propertyOverrides']:
                 if 'propertyId' in override and 'text' in override:
+                    # Get the property type
+                    property_type = override.get('type', 'Plain Text')
+                    
+                    # Extract text based on property type
+                    if property_type == 'Rich Text':
+                        text_content = override['text'].get('html', '')
+                    else:  # Plain Text or other types
+                        text_content = override['text'].get('text', '')
+                    
                     property_data = {
                         "propertyId": override['propertyId'],
-                        "text": override['text'].get('text', '')
+                        "type": property_type,
+                        "label": override.get('label', ''),
+                        "text": text_content
                     }
                     node_data["propertyOverrides"].append(property_data)
             
@@ -255,7 +294,8 @@ def translate_content_with_openai(parsed_nodes, target_language, api_key):
         system_message = f"""You are a professional translator with 20 years of experience.  
         Translate only the "text" values in the JSON to {target_language}.
 
-        If the {target_language} is "sw", then in that case translate to Swahili only.
+        If the {target_language} is "sw", then in that case translate to Swahili.
+
          
         
         DO NOT TRANSLATE the following terms - keep them exactly as they appear:
@@ -265,6 +305,8 @@ def translate_content_with_openai(parsed_nodes, target_language, api_key):
         - When encountering the word "Deriv" and any succeeding word, analyze the context and based on it, keep it in English. For example, "Deriv Blog," "Deriv Life," "Deriv Bot," and "Deriv App" should be kept in English.
         - Keep product names such as Forex, CFDs, P2P, MT5, Deriv X, Deriv cTrader, SmartTrader, Deriv Trader, Deriv GO, Deriv Bot, and Binary Bot in English.
         - Do not translate the following names of people explicitly mentioned in the JSON: Louise Wolf, Rakshit Choudhary,Chris Horn, Seema Hallon, Jean-Yves Sireau, and others. Keep them in English.
+        - Do not translate "24/7". Keep the number in English.
+        - When encountering the symbol "?", mirror it in the translated text when the target language is Arabic.
         
         Keep all other JSON structure and values exactly the same.
         Return only the JSON, no explanations."""
@@ -395,7 +437,7 @@ def main():
     # Add the image at the top with centering and stretching
     col1, col2, col3 = st.columns([1, 3, 1])
     with col2:
-        st.image("jameson.webp", caption="J. Jonah Jameson", use_container_width=True)
+        st.image("jameson.webp", caption="J. Jonah Jameson")
     
     # Print current session state
     print("\nCurrent Session State:")
@@ -406,62 +448,37 @@ def main():
     print(f"Has OpenAI key: {bool(st.session_state.openai_key)}")
     print(f"Has current content: {bool(st.session_state.current_content)}")
     
-    # Step 1: Get API Token and Site ID
-    with st.form("credentials_form"):
-        # Add help text for API token
-        st.markdown("""
-        ### API Token Requirements
-        - Must be a valid Webflow API token
-        - Requires `pages:read` scope
-        - Format: Bearer token
-        """)
+    # Check if credentials are set in session state
+    if not st.session_state.api_key or not st.session_state.site_id:
+        st.warning("Please enter your Webflow API Key and Site ID in the sidebar to continue.")
+        st.stop()
         
-        site_id = st.text_input(
-            "Site ID", 
-            value=st.session_state.site_id,
-            help="The unique identifier for your Webflow site"
-        )
-        api_key = st.text_input(
-            "API Key", 
-            type="password", 
-            value=st.session_state.api_key,
-            help="Your Webflow API token with pages:read scope"
-        )
-        submit_button = st.form_submit_button("Validate & Fetch Site Data")
+    # Add page description instead of API token requirements
+    st.header("JJJ - The webflow page translator ")
+    st.markdown(
+        "This tool helps you view, translate, and manage Webflow content across multiple languages. "
+        "Select a page to view its content, then use OpenAI to translate it to any available locale."
+    )
     
-    if submit_button:
-        # First validate the API token
-        if validate_api_token(api_key):
-            st.success("API token validated successfully!")
-            st.session_state.site_id = site_id
-            st.session_state.api_key = api_key
-            
-            # Step 2: Get Pages and Locales
-            with st.spinner("Fetching site data..."):
-                # Get and display locales
-                locales = get_site_locales(site_id, api_key)
-                if locales:
-                    st.session_state.locales = locales
-                    st.subheader("Available Locales")
-                    locale_data = {
-                        "Type": [locale.get('type', 'Unknown') for locale in locales],
-                        "Display Name": [locale.get('displayName', 'Unnamed') for locale in locales],
-                        "Locale ID": [locale.get('id', 'No ID') for locale in locales],
-                        "Tag": [locale.get('tag', 'No tag') for locale in locales]
-                    }
-                    st.table(locale_data)
-                
-                # Uncomment these lines to fetch pages
-                pages = get_pages(site_id, api_key)
-                if pages:
-                    st.session_state.pages = pages
-                    st.subheader("Available Pages")
-                    page_data = {
-                        "Title": [page.get('title', 'Untitled') for page in pages],
-                        "Page ID": [page['id'] for page in pages],
-                        "Slug": [page.get('slug', 'No slug') for page in pages]
-                    }
-                    st.table(page_data)
+    # Display available locales and pages if they exist in session state
+    if st.session_state.locales:
+        st.subheader("Available Locales")
+        locale_data = {
+            "Type": [locale.get('type', 'Unknown') for locale in st.session_state.locales],
+            "Display Name": [locale.get('displayName', 'Unnamed') for locale in st.session_state.locales],
+            "Locale ID": [locale.get('id', 'No ID') for locale in st.session_state.locales],
+            "Tag": [locale.get('tag', 'No tag') for locale in st.session_state.locales]
+        }
+        st.table(locale_data)
+    
+    if st.session_state.pages:
+        st.subheader("Available Pages")
+        page_data = {
+            "Title": [page.get('title', 'Untitled') for page in st.session_state.pages],
+            "Page ID": [page['id'] for page in st.session_state.pages],
+            "Slug": [page.get('slug', 'No slug') for page in st.session_state.pages]
+        }
+        st.table(page_data)
     
     # Page selection and content viewing
     if st.session_state.pages:
@@ -485,11 +502,20 @@ def main():
             
             # Display content if available
             if st.session_state.current_content:
-                st.subheader("Raw Page Content")
-                st.json(st.session_state.current_content)
+                st.subheader("Page Content View")
                 
-                st.subheader("Parsed Nodes with Property Overrides")
-                st.json(st.session_state.parsed_nodes)
+                # Create two columns for side-by-side display
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.markdown("### Raw Page Content")
+                    with st.expander("Show/Hide Raw Content", expanded=True):
+                        st.json(st.session_state.current_content)
+                
+                with col2:
+                    st.markdown("### Parsed Nodes with Property Overrides")
+                    with st.expander("Show/Hide Parsed Nodes", expanded=True):
+                        st.json(st.session_state.parsed_nodes)
                 
                 # Translation section
                 if st.session_state.openai_key and st.session_state.locales:
@@ -551,7 +577,10 @@ def main():
                                 print(f"\nUsing locale ID: {locale_id}")
                                 print(f"Language tag: {locale_options[target_language]['tag']}")
                                 
-                                # Create an expander for each language's details
+                                # Create a minimal status indicator for this language
+                                st.success(f"Translation completed for {target_language}")
+                                
+                                # Create an expander for the language details
                                 with st.expander(f"Translation Details - {target_language}", expanded=False):
                                     st.subheader("Translated Content")
                                     st.json(translated_content)
@@ -804,16 +833,38 @@ def main():
                                 progress = (index + 1) / len(target_languages)
                                 progress_bar.progress(progress)
                                 
+                                # Create a summary of the translation
+                                st.write(f"✅ {target_language}: Translation completed")
+                                
                                 # Add a small delay between requests to avoid rate limits
                                 time.sleep(1)
                         
                         translation_status.text("All translations completed!")
+                        
+                        # Add an expander with all results
+                        with st.expander("View all translation details", expanded=False):
+                            for index, target_language in enumerate(target_languages):
+                                st.subheader(f"Translation Details - {target_language}")
+                                st.write(f"Status: Completed")
+                                if user_role == "Proofreader":
+                                    st.write("Review status available in the Side-by-Side View tab")
+                                else:
+                                    st.write("Content was updated directly to Webflow")
                         
                 else:
                     if not st.session_state.openai_key:
                         st.warning("Please add your OpenAI API key in the sidebar to enable translations")
                     if not st.session_state.locales:
                         st.warning("No locales available for translation")
+
+    # Add footer at the bottom of the app
+    st.markdown("---")
+    st.markdown(
+        "<div style='text-align: center; color: gray; padding: 10px;'>"
+        "If you find this tool helpful, please buy me coffee and some shawarmas! ☕🌯"
+        "</div>", 
+        unsafe_allow_html=True
+    )
 
 if __name__ == "__main__":
     main()
