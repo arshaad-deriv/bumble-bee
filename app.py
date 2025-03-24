@@ -65,6 +65,8 @@ if 'api_key' not in st.session_state:
     st.session_state.api_key = ''
 if 'openai_key' not in st.session_state:
     st.session_state.openai_key = ''
+if 'claude_api_key' not in st.session_state:
+    st.session_state.claude_api_key = ''
 if 'pages' not in st.session_state:
     st.session_state.pages = []
 if 'locales' not in st.session_state:
@@ -73,9 +75,182 @@ if 'current_content' not in st.session_state:
     st.session_state.current_content = None
 if 'parsed_nodes' not in st.session_state:
     st.session_state.parsed_nodes = None
+# Add these new session state variables for password verification
+if 'password_attempts' not in st.session_state:
+    st.session_state.password_attempts = 0
+if 'is_authenticated' not in st.session_state:
+    st.session_state.is_authenticated = False
+if 'show_password_dialog' not in st.session_state:
+    st.session_state.show_password_dialog = False
 
 # Add sidebar configuration
 with st.sidebar:
+    
+    # Add the "Do We Know You?" button
+    if not st.session_state.is_authenticated:
+        if st.button("Do We Know You?"):
+            st.session_state.show_password_dialog = True
+            
+        # Show password dialog if button was clicked
+        if st.session_state.show_password_dialog:
+            # Check if max attempts reached
+            if st.session_state.password_attempts >= 3:
+                st.error("Maximum password attempts reached. Please refresh the page to try again.")
+            else:
+                # Create password input
+                password = st.text_input("Enter password:", type="password")
+                
+                if st.button("Submit"):
+                    # Get correct password from secrets
+                    correct_password = st.secrets["password"]["LET_ME_IN"]
+                    
+                    if password == correct_password:
+                        st.session_state.is_authenticated = True
+                        st.session_state.show_password_dialog = False
+                        
+                        # Set API keys directly from secrets
+                        try:
+                            # Set OpenAI API key
+                            st.session_state.openai_key = st.secrets["api_keys"]["openai"]
+                            
+                            # Set Claude API key - this is the part that wasn't working
+                            st.session_state.claude_api_key = st.secrets["api_keys"]["claude"]
+                            
+                            print(f"OpenAI API key loaded: {st.session_state.openai_key[:10]}...")
+                            print(f"Claude API key loaded: {st.session_state.claude_api_key[:10]}...")
+                            
+                            success_message = "Authentication successful! OpenAI and Claude API keys configured."
+                        except Exception as e:
+                            print(f"Error loading API keys: {str(e)}")
+                            success_message = "Authentication successful, but there was an issue loading API keys."
+                        
+                        st.success(success_message)
+                        # Refresh the sidebar
+                        st.experimental_rerun()
+                    else:
+                        st.session_state.password_attempts += 1
+                        remaining_attempts = 3 - st.session_state.password_attempts
+                        st.error(f"Incorrect password. {remaining_attempts} attempts remaining.")
+    
+    # Show preset options if authenticated
+    if st.session_state.is_authenticated:
+        st.success("Welcome back!")
+        preset_option = st.selectbox(
+            "Select preset:",
+            options=["Deriv UAE", "Deriv main"],
+            key="preset_selector"
+        )
+        
+        # Set API key and site ID based on selection
+        if preset_option == "Deriv UAE":
+            # Load Dubai webflow credentials from secrets
+            try:
+                # Print debug information
+                print("\nAttempting to load Webflow Dubai credentials...")
+                print(f"Available sections in secrets: {list(st.secrets.keys())}")
+                
+                # Check if the section exists
+                if "webflow_dubai" in st.secrets:
+                    print(f"webflow_dubai section found with keys: {list(st.secrets.webflow_dubai.keys())}")
+                
+                    # Get the credentials
+                    site_id = st.secrets.webflow_dubai.webflow_dubai_site_id
+                    api_key = st.secrets.webflow_dubai.webflow_dubai_api
+                    
+                    print(f"Retrieved site_id: {site_id[:4]}...")
+                    print(f"Retrieved api_key: {api_key[:4]}...")
+                    
+                    # Update session state
+                    st.session_state.site_id = site_id
+                    st.session_state.api_key = api_key
+                    
+                    # Reset cached data related to site changes
+                    st.session_state.pages = []
+                    st.session_state.locales = []
+                    st.session_state.current_content = None
+                    st.session_state.parsed_nodes = None
+                    
+                    st.info(f"Using Deriv UAE credentials - Site ID: {site_id[:4]}...")
+                    
+                    # Add a button to validate immediately
+                    if st.button("Validate UAE Credentials"):
+                        if validate_api_token(st.session_state.api_key):
+                            st.success("Deriv UAE API credentials validated successfully!")
+                            
+                            # Fetch site data
+                            with st.spinner("Fetching site data..."):
+                                locales = get_site_locales(st.session_state.site_id, st.session_state.api_key)
+                                if locales:
+                                    st.session_state.locales = locales
+                                
+                                pages = get_pages(st.session_state.site_id, st.session_state.api_key)
+                                if pages:
+                                    st.session_state.pages = pages
+                                    st.success(f"Successfully fetched {len(pages)} pages and {len(locales)} locales!")
+                else:
+                    st.error("webflow_dubai section not found in secrets.toml")
+                    print("Available sections:", list(st.secrets.keys()))
+                    
+            except Exception as e:
+                st.error(f"Error loading Deriv UAE credentials: {str(e)}")
+                print(f"Exception details: {str(e)}")
+                import traceback
+                print(traceback.format_exc())
+                
+        elif preset_option == "Deriv main":
+            # Load main webflow credentials from secrets
+            try:
+                # Print debug information
+                print("\nAttempting to load Webflow Main credentials...")
+                print(f"Available sections in secrets: {list(st.secrets.keys())}")
+                
+                # Check if the section exists - FIXED SECTION NAME HERE
+                if "wf_main_deriv" in st.secrets:
+                    print(f"wf_main_deriv section found with keys: {list(st.secrets.wf_main_deriv.keys())}")
+                
+                    # Get the credentials using the correct section name
+                    site_id = st.secrets.wf_main_deriv.webflow_main_site_id
+                    api_key = st.secrets.wf_main_deriv.webflow_main_api
+                    
+                    print(f"Retrieved site_id: {site_id[:4]}...")
+                    print(f"Retrieved api_key: {api_key[:4]}...")
+                    
+                    # Update session state
+                    st.session_state.site_id = site_id
+                    st.session_state.api_key = api_key
+                    
+                    # Reset cached data related to site changes
+                    st.session_state.pages = []
+                    st.session_state.locales = []
+                    st.session_state.current_content = None
+                    st.session_state.parsed_nodes = None
+                    
+                    st.info(f"Using Deriv Main credentials - Site ID: {site_id[:4]}...")
+                    
+                    # Add a button to validate immediately
+                    if st.button("Validate Deriv main Credentials"):
+                        if validate_api_token(st.session_state.api_key):
+                            st.success("Deriv main API credentials validated successfully!")
+                            
+                            # Fetch site data
+                            with st.spinner("Fetching site data..."):
+                                locales = get_site_locales(st.session_state.site_id, st.session_state.api_key)
+                                if locales:
+                                    st.session_state.locales = locales
+                                
+                                pages = get_pages(st.session_state.site_id, st.session_state.api_key)
+                                if pages:
+                                    st.session_state.pages = pages
+                                    st.success(f"Successfully fetched {len(pages)} pages and {len(locales)} locales!")
+                else:
+                    st.error("wf_main_deriv section not found in secrets.toml")
+                    print("Available sections:", list(st.secrets.keys()))
+                    
+            except Exception as e:
+                st.error(f"Error loading Deriv main credentials: {str(e)}")
+                print(f"Exception details: {str(e)}")
+                import traceback
+                print(traceback.format_exc())
     
     # OpenAI Configuration with header and expander
     st.subheader("OpenAI Configuration")
@@ -88,6 +263,18 @@ with st.sidebar:
         )
         if openai_key:
             st.session_state.openai_key = openai_key
+    
+    # Claude Configuration with header and expander
+    st.subheader("Claude Configuration")
+    with st.expander("Configure API Key", expanded=False):
+        claude_api_key = st.text_input(
+            "Claude API Key",
+            type="password",
+            value=st.session_state.claude_api_key,
+            help="Your Claude API key for Portuguese translations"
+        )
+        if claude_api_key:
+            st.session_state.claude_api_key = claude_api_key
     
     # Add divider between configurations
     st.divider()
@@ -295,9 +482,7 @@ def translate_content_with_openai(parsed_nodes, target_language, api_key):
         Translate only the "text" values in the JSON to {target_language}.
 
         If the {target_language} is "sw", then in that case translate to Swahili.
-
-         
-        
+                 
         DO NOT TRANSLATE the following terms - keep them exactly as they appear:
         {terms_list}
         
