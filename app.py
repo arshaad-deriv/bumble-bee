@@ -126,7 +126,7 @@ with st.sidebar:
                         
                         st.success(success_message)
                         # Refresh the sidebar
-                        st.experimental_rerun()
+                        st.rerun()
                     else:
                         st.session_state.password_attempts += 1
                         remaining_attempts = 3 - st.session_state.password_attempts
