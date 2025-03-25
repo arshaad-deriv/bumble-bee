@@ -664,7 +664,19 @@ def main():
                         'Seema Hallon',
                         'Joanna Frendo',
                         'Jennice Lourdsamy',
-                        'Prakash Bhudia'
+                        'Prakash Bhudia',
+                        'Alexandros A. Patsalides',
+                        'Geo Nicolaidis',
+                        'Yarham Hadeng'
+                        'Anna Themistokleous',
+                        'Paul Devoy',
+                        'Kirsty Abela',
+                        'Baptistin Coutance', 
+                        'Robin Villard',
+                        'Thomas Jarrey',
+                        'Vincent Lavrov',
+                        'Yvan Lazard'
+
                     ],
                     'custom_terms': []
                 }
