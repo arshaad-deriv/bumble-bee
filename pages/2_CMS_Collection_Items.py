@@ -134,6 +134,37 @@ COLLECTION_CONFIGS = {
         "display_name": "Help Center Question",
         "item_identifier": "name"  # Use question field as identifier
     },
+        "Newsroom articles": {
+        "fields_to_translate": [
+            'name',                    # Question title
+            'meta-description-2',
+            'page-title',
+            'summary',
+            'post',            # Answer content
+        ],
+        "fields_to_preserve": [
+            'slug',                   # URL slug
+            'category',            # Category identifier
+        ],
+        "display_name": "Newsroom articles",
+        "item_identifier": "Newsroom articles"  # Use question field as identifier
+    },
+      "EU Newsroom articles": {
+        "fields_to_translate": [
+            'name',                    # Question title
+            'meta-description-2',
+            'page-title',
+            'summary',
+            'post',            # Answer content
+        ],
+        "fields_to_preserve": [
+            'slug',                   # URL slug
+            'category',            # Category identifier
+        ],
+        "display_name": "EU Newsroom articles",
+        "item_identifier": "EU Newsroom articles"  # Use question field as identifier
+    },
+
     "EU Blogs": {
         "fields_to_translate": [
             'disclaimer-2',
