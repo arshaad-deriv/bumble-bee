@@ -163,6 +163,20 @@ COLLECTION_CONFIGS = {
         "item_identifier": "name"
     },
 
+        "Newsroom": {
+        "fields_to_translate": [
+            'post',
+            'image-alt-text',
+            'summary',
+            'name',
+            'meta-description-2',
+            'page-title'
+        ],
+        "fields_to_preserve": ['slug'],
+        "display_name": "Newsroom",
+        "item_identifier": "name"
+    },
+
     "Tactical Indices": {
         "fields_to_translate": [
             'disclaimer-2',
