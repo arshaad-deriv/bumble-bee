@@ -7,6 +7,7 @@ import time
 import datetime
 import concurrent.futures
 from concurrent.futures import ThreadPoolExecutor
+import anthropic  # Add this new import for Claude API
 
 # Set up logging configuration at the top of the file
 logging.basicConfig(
@@ -90,7 +91,7 @@ COLLECTION_CONFIGS = {
             'order-number',
             'main-questions',
         ],
-        "display_name": "Help Center Category",
+        "display_name": "Help Centre Category",
         "item_identifier": "name"
     },
     "Help Centre Categories": {
@@ -134,37 +135,6 @@ COLLECTION_CONFIGS = {
         "display_name": "Help Center Question",
         "item_identifier": "name"  # Use question field as identifier
     },
-        "Newsroom articles": {
-        "fields_to_translate": [
-            'name',                    # Question title
-            'meta-description-2',
-            'page-title',
-            'summary',
-            'post',            # Answer content
-        ],
-        "fields_to_preserve": [
-            'slug',                   # URL slug
-            'category',            # Category identifier
-        ],
-        "display_name": "Newsroom articles",
-        "item_identifier": "Newsroom articles"  # Use question field as identifier
-    },
-      "EU Newsroom articles": {
-        "fields_to_translate": [
-            'name',                    # Question title
-            'meta-description-2',
-            'page-title',
-            'summary',
-            'post',            # Answer content
-        ],
-        "fields_to_preserve": [
-            'slug',                   # URL slug
-            'category',            # Category identifier
-        ],
-        "display_name": "EU Newsroom articles",
-        "item_identifier": "EU Newsroom articles"  # Use question field as identifier
-    },
-
     "EU Blogs": {
         "fields_to_translate": [
             'disclaimer-2',
@@ -178,6 +148,59 @@ COLLECTION_CONFIGS = {
         "display_name": "Blog Post",
         "item_identifier": "name"
     },
+    
+    "EU Newsroom": {
+        "fields_to_translate": [
+            'post',
+            'image-alt-text',
+            'summary',
+            'name',
+            'meta-description-2',
+            'page-title'
+        ],
+        "fields_to_preserve": ['slug'],
+        "display_name": "EU Newsroom",
+        "item_identifier": "name"
+    },
+
+    "Tactical Indices": {
+        "fields_to_translate": [
+            'disclaimer-2',
+            'text'
+            ],
+        "fields_to_preserve": ['slug'],
+        "display_name": "Tactical Indices",
+        "item_identifier": "name"
+    },
+    
+    "ROW Trading pages FAQ's": {
+        "fields_to_translate": [
+            'answer',
+            'name'
+            ],
+        "fields_to_preserve": ['slug'],
+        "display_name": "ROW Trading pages FAQ's",
+        "item_identifier": "name"
+    },
+    
+    "EU CTA Footer CMS": {
+        "fields_to_translate": [
+            'description'
+        ],
+        "fields_to_preserve": ['slug'],
+        "display_name": "EU CTA Footer",
+        "item_identifier": "description"
+    },
+
+        "CTA Footer CMS": {
+        "fields_to_translate": [
+            'description'
+        ],
+        "fields_to_preserve": ['slug'],
+        "display_name": " CTA Footer CMS",
+        "item_identifier": "description"
+    },
+
 }
 
 def get_collection_config(collection_name):
@@ -393,7 +416,7 @@ def translate_with_openai_concurrent(text, target_language, api_key):
         logger.info(f"\n{'='*50}")
         logger.info("OPENAI API REQUEST")
         logger.info(f"{'='*50}")
-        logger.info(f"Model: gpt-4o-mini")
+        logger.info(f"Model: gpt-4.1-mini")
         logger.info("System Message:")
         logger.info(system_message)
         logger.info("\nUser Message:")
@@ -402,7 +425,7 @@ def translate_with_openai_concurrent(text, target_language, api_key):
         # Make API call with timing
         start_time = time.time()
         response = client.chat.completions.create(
-            model="o3-mini",
+            model="gpt-4.1-mini",
             messages=[
                 {"role": "system", "content": system_message},
                 {"role": "user", "content": text}
@@ -478,16 +501,123 @@ def execute_curl_command_concurrent(collection_id, item_id, api_key, cms_locale_
             'error': str(e)
         }
 
+def translate_with_claude_portuguese(text, target_language, api_key):
+    """Thread-safe version of translate with Claude API for Portuguese translations"""
+    try:
+        # Log translation request details
+        logger.info(f"\n{'='*50}")
+        logger.info("CLAUDE PORTUGUESE TRANSLATION REQUEST DETAILS")
+        logger.info(f"{'='*50}")
+        logger.info(f"Target Language: {target_language}")
+        logger.info(f"Input Text Length: {len(text)} characters")
+        logger.info(f"Input Text Preview: {text[:200]}..." if len(text) > 200 else text)
+        
+        # Log glossary terms being used
+        do_not_translate_terms = []
+        if 'glossary' in st.session_state:
+            for category, terms in st.session_state.glossary.items():
+                do_not_translate_terms.extend(terms)
+            logger.info(f"\nGlossary Terms Applied:")
+            logger.info(f"Total Terms: {len(do_not_translate_terms)}")
+            logger.info("Terms List:")
+            for term in do_not_translate_terms:
+                logger.info(f"- {term}")
+        
+        # Format terms for prompt
+        terms_list = "\n".join([f"- {term}" for term in do_not_translate_terms])
+        
+        # Create Claude client
+        client = anthropic.Anthropic(api_key=api_key)
+        
+        system_message = f"""Act as a professional translator with 20 years of experience specializing in European Portuguese (Portugal) and these translation MUST strictly adhere to Portugal's Portuguese language standards, NOT Brazilian Portuguese. Your role is to ensure accurate, contextually relevant translations, adhering strictly to guidelines and using available resources efficiently. Translations should read naturally to native speakers of the target language, not just as direct translations from English.
+        Translate the text to {target_language}.
+        
+        DO NOT TRANSLATE the following terms - keep them exactly as they appear:
+        {terms_list}
+        
+        Follow these additional rules when translating:
+        - When encountering the word "Deriv" and any succeeding word, keep it in English. For example, "Deriv Blog," "Deriv Life," "Deriv Bot," and "Deriv App" should be kept in English.
+        - Keep product names such as P2P, MT5, Deriv X, Deriv cTrader, SmartTrader, Deriv Trader, Deriv GO, Deriv Bot, and Binary Bot in English.
+        
+        Return only the translation, no explanations."""
+        
+        # Log Claude API request
+        logger.info(f"\n{'='*50}")
+        logger.info("CLAUDE API REQUEST (PORTUGUESE)")
+        logger.info(f"{'='*50}")
+        logger.info(f"Model: claude-3-5-sonnet")
+        logger.info("System Message:")
+        logger.info(system_message)
+        logger.info("\nUser Message:")
+        logger.info(text)
+        
+        # Make API call with timing
+        start_time = time.time()
+        response = client.messages.create(
+            model="claude-3-5-sonnet-20240620",
+            system=system_message,
+            messages=[
+                {"role": "user", "content": text}
+            ],
+            temperature=0.3,
+            max_tokens=8000
+        )
+        end_time = time.time()
+        
+        # Log Claude API response
+        logger.info(f"\n{'='*50}")
+        logger.info("CLAUDE API RESPONSE (PORTUGUESE)")
+        logger.info(f"{'='*50}")
+        logger.info(f"Response Time: {end_time - start_time:.2f} seconds")
+        
+        translated_text = response.content[0].text
+        
+        # Log translation result
+        logger.info(f"\nTranslated Text Preview: {translated_text[:200]}..." if len(translated_text) > 200 else translated_text)
+        
+        # Log term preservation check
+        logger.info(f"\n{'='*50}")
+        logger.info("TERM PRESERVATION CHECK (PORTUGUESE)")
+        logger.info(f"{'='*50}")
+        for term in do_not_translate_terms:
+            if term in text and term in translated_text:
+                logger.info(f"✅ Term preserved: {term}")
+            elif term in text and term not in translated_text:
+                logger.warning(f"⚠️ Term not preserved: {term}")
+        
+        logger.info(f"\n{'='*50}\n")
+        
+        return translated_text, None
+    except Exception as e:
+        error_msg = f"Claude Portuguese translation error: {str(e)}"
+        logger.error(error_msg)
+        logger.error(f"{'='*50}\n")
+        return None, error_msg
+
 def process_language_translation_concurrent(item_data, locale, openai_key, webflow_key, collection_id, config):
     """Process translation for a single language using concurrent approach"""
     # Store translations for this language
     current_translations = {}
     
+    # Determine if we should use Claude API for Portuguese (only if Claude API key is available)
+    is_portuguese = locale['code'].lower() in ['pt', 'pt-br', 'pt-pt']
+    use_claude = is_portuguese and st.session_state.get('claude_api_key')
+    
     # Translate each field - only translate fields in fields_to_translate
     for key, value in item_data['data'].items():
         if key in config['fields_to_translate'] and isinstance(value, str):
-            # Translate the field
-            translated_text, error = translate_with_openai_concurrent(value, locale['code'], openai_key)
+            # Translate the field using appropriate API
+            if use_claude:
+                # Use Claude for Portuguese if API key is available
+                translated_text, error = translate_with_claude_portuguese(
+                    value, locale['code'], st.session_state.claude_api_key
+                )
+            else:
+                # Use OpenAI for all other languages and for Portuguese if Claude API key is not available
+                translated_text, error = translate_with_openai_concurrent(
+                    value, locale['code'], openai_key
+                )
+                
             if error:
                 return {
                     'item': item_data['identifier'],
@@ -513,8 +643,8 @@ def process_language_translation_concurrent(item_data, locale, openai_key, webfl
     return {
         'item': item_data['identifier'],
         'language': locale['name'],
-        'status': 'success' if not result['error'] else 'error',
-        'message': result['error'] if result['error'] else 'Translation completed successfully'
+        'status': 'success' if not result.get('error') else 'error',
+        'message': result.get('error', 'Translation completed successfully')
     }
 
 def get_collections(site_id, api_key):
@@ -601,9 +731,17 @@ def main():
         st.error("Please enter your Site ID and API Key in the main page first")
         return
     
-    if not st.session_state.get('openai_key'):
-        st.warning("Please add your OpenAI API key in the sidebar to enable translations")
+    # Check if at least one API key is available (OpenAI or Claude)
+    if not st.session_state.get('openai_key') and not st.session_state.get('claude_api_key'):
+        st.warning("Please add either an OpenAI API key or a Claude API key in the sidebar to enable translations")
         return
+    
+    # Display warnings about missing API keys 
+    if not st.session_state.get('openai_key'):
+        st.info("OpenAI API key is not set. Translations will not be available.")
+    
+    if not st.session_state.get('claude_api_key'):
+        st.info("Claude API key is not set. Portuguese translations will use OpenAI instead of Claude.")
     
     # Track API credential changes
     if 'previous_api_key' not in st.session_state:
@@ -658,10 +796,10 @@ def main():
     if st.session_state.selected_mode == "The Need for Speed (Batch Translation)" and st.session_state.selected_collection and "Blog" not in st.session_state.selected_collection:
         st.warning("⚠️ 'The Need for Speed' mode is currently only available for Blog collections. Please select a Blog collection to use this feature.")
     
-    # Display CMS locales table
+    # Fetch CMS locales (different from site locales in app.py)
     st.subheader("CMS Locales")
     
-    # Only fetch CMS locales if not already in session state
+    # Fetch CMS locales if not already in session state
     if st.session_state.cms_locales is None:
         with st.spinner("Fetching CMS locales..."):
             cms_locales = get_cms_locales(st.session_state.site_id, st.session_state.api_key)
@@ -795,6 +933,11 @@ def main():
                                     cms_locale_id = target_language.split(' - ')[-1]
                                     language_code = target_language.split('(')[1].split(')')[0]
                                     
+                                    # Check if this is Portuguese
+                                    is_portuguese = language_code.lower() in ['pt', 'pt-br', 'pt-pt']
+                                    if is_portuguese and not st.session_state.get('claude_api_key'):
+                                        st.info("You are translating to Portuguese. For better European Portuguese translations, consider adding a Claude API key in the sidebar. OpenAI will be used instead.")
+                                    
                                     # Initialize a dictionary to store translations
                                     if 'current_translations' not in st.session_state:
                                         st.session_state.current_translations = {}
@@ -860,26 +1003,44 @@ def main():
                                             update_button = st.form_submit_button("Update Content")
                                         
                                         if translate_button:
-                                            with st.spinner("Translating content..."):
-                                                # Clear previous translations
-                                                st.session_state.current_translations = {}
-                                                
-                                                for key, value in selected_data['data'].items():
-                                                    if isinstance(value, str) and key not in config['fields_to_preserve']:
-                                                        translated_text, error = translate_with_openai_concurrent(
-                                                            value,
-                                                            language_code,
-                                                            st.session_state.openai_key
-                                                        )
-                                                        if error:
-                                                            st.error(f"Error translating {key}: {error}")
-                                                        else:
-                                                            # Store the translation in session state
-                                                            st.session_state.current_translations[key] = translated_text
-                                                            edited_fields[key] = translated_text
-                                                
-                                                # Force a rerun to show the translations
-                                                st.rerun()
+                                            # Check if we're already in a post-translation state
+                                            if 'just_translated' in st.session_state and st.session_state.just_translated:
+                                                # Clear the flag and don't rerun
+                                                st.session_state.just_translated = False
+                                            else:
+                                                with st.spinner("Translating content..."):
+                                                    # Clear previous translations
+                                                    st.session_state.current_translations = {}
+                                                    
+                                                    for key, value in selected_data['data'].items():
+                                                        if isinstance(value, str) and key not in config['fields_to_preserve']:
+                                                            # Use the same logic as process_language_translation_concurrent
+                                                            # to determine which API to use
+                                                            is_portuguese = language_code.lower() in ['pt', 'pt-br', 'pt-pt']
+                                                            use_claude = is_portuguese and st.session_state.get('claude_api_key')
+                                                            
+                                                            if use_claude:
+                                                                # Use Claude for Portuguese if API key is available
+                                                                translated_text, error = translate_with_claude_portuguese(
+                                                                    value, language_code, st.session_state.claude_api_key
+                                                                )
+                                                            else:
+                                                                # Use OpenAI for all other languages and for Portuguese if Claude API key is not available
+                                                                translated_text, error = translate_with_openai_concurrent(
+                                                                    value, language_code, st.session_state.openai_key
+                                                                )
+                                                            
+                                                            if error:
+                                                                st.error(f"Error translating {key}: {error}")
+                                                            else:
+                                                                # Store the translation in session state
+                                                                st.session_state.current_translations[key] = translated_text
+                                                                edited_fields[key] = translated_text
+                                                    
+                                                    # Set a flag to indicate translation just completed
+                                                    st.session_state.just_translated = True
+                                                    # Force a rerun to show the translations
+                                                    st.rerun()
                                         
                                         if update_button:
                                             with st.spinner("Updating content..."):
@@ -921,39 +1082,22 @@ def main():
                                         # Store translations for this language
                                         current_translations = {}
                                         
-                                        # Translate each field
-                                        for key, value in selected_data['data'].items():
-                                            if isinstance(value, str) and key not in config['fields_to_preserve']:
-                                                translated_text, error = translate_with_openai_concurrent(
-                                                    value,
-                                                    locale['code'],
-                                                    st.session_state.openai_key
-                                                )
-                                                if error:
-                                                    translation_results.append({
-                                                        'language': locale['name'],
-                                                        'status': 'error',
-                                                        'message': f"Error translating {key}: {error}"
-                                                    })
-                                                    translated_text = value
-                                                current_translations[key] = translated_text
-                                            else:
-                                                current_translations[key] = value
-                                        
-                                        # Execute update for this language
-                                        result = execute_curl_command_concurrent(
+                                        # Process this language using the same function used in batch mode
+                                        # This will automatically use Claude for Portuguese if available
+                                        result = process_language_translation_concurrent(
+                                            item_data=selected_data,
+                                            locale=locale,
+                                            openai_key=st.session_state.openai_key,
+                                            webflow_key=st.session_state.api_key,
                                             collection_id=collection_id,
-                                            item_id=selected_data['id'],
-                                            api_key=st.session_state.api_key,
-                                            cms_locale_id=locale['id'],
-                                            field_data=current_translations
+                                            config=config
                                         )
                                         
                                         # Store result
                                         translation_results.append({
                                             'language': locale['name'],
-                                            'status': 'success' if not result['error'] else 'error',
-                                            'message': result['error'] if result['error'] else 'Translation completed successfully'
+                                            'status': 'success' if not result.get('message') else 'error',
+                                            'message': result.get('message', 'Translation completed successfully')
                                         })
                                         
                                         # Update results in real-time
@@ -1247,4 +1391,4 @@ def main():
     )
 
 if __name__ == "__main__":
-    main() 
+    main()
