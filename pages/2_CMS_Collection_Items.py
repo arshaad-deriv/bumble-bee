@@ -137,7 +137,7 @@ COLLECTION_CONFIGS = {
     },
     "EU Blogs": {
         "fields_to_translate": [
-            'disclaimer-2',
+            'disclaimer',
             'post',
             'summary',
             'name',
